@@ -1,70 +1,52 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
-import { AuthProvider } from '../hooks/useAuth'; // Para obter o user_id atual
 
 interface Bank {
   id: string;
   name: string;
-  initial_capital: number; // Note o snake_case para corresponder ao banco de dados
+  initialCapital: number;
   roi: number;
-  gross_profit: number;
-  user_id: string;
-  created_at?: string;
-  updated_at?: string;
+  grossProfit: number;
 }
 
 const MinhasBancas: React.FC = () => {
   const navigate = useNavigate();
-  const { user } = AuthProvider(); // Assume que você tem um hook de autenticação
-  const [banks, setBanks] = useState<Bank[]>([]);
+  const [banks, setBanks] = useState<Bank[]>(() => {
+    const saved = localStorage.getItem('banks');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBank, setEditingBank] = useState<Bank | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     initialCapital: ''
   });
-  const [loading, setLoading] = useState(true);
 
-  // Buscar bancos do usuário atual
   useEffect(() => {
-    if (user) {
-      fetchBanks();
-    }
-  }, [user]);
+    localStorage.setItem('banks', JSON.stringify(banks));
+  }, [banks]);
 
-  const fetchBanks = async () => {
-    try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from('banks')
-        .select('*')
-        .eq('user_id', user?.id)
-        .order('name');
-
-      if (error) throw error;
-      
-      setBanks(data || []);
-    } catch (error) {
-      console.error('Erro ao buscar bancas:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Funções de formatação de moeda
+  // Format number to currency input
   const formatCurrencyInput = (value: string): string => {
+    // Remove non-digit characters
     const numericValue = value.replace(/\D/g, "");
+    
     if (numericValue === '') return '';
+    
+    // Convert to decimal (divide by 100)
     const floatValue = parseFloat(numericValue) / 100;
+    
+    // Format as Brazilian currency
     return new Intl.NumberFormat('pt-BR', {
       style: 'currency',
       currency: 'BRL'
     }).format(floatValue);
   };
 
+  // Parse currency string to number
   const parseCurrencyValue = (value: string): number => {
+    // Remove currency symbol, spaces, and replace comma with dot
     return parseFloat(value.replace(/[^\d,]/g, '').replace(',', '.')) || 0;
   };
 
@@ -73,62 +55,44 @@ const MinhasBancas: React.FC = () => {
     setFormData({ ...formData, initialCapital: formatted });
   };
 
-  // Criar ou atualizar banca
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    try {
-      const capitalValue = parseCurrencyValue(formData.initialCapital);
-      const now = new Date().toISOString();
-      
-      if (editingBank) {
-        // Atualizar banca existente
-        const { error } = await supabase
-          .from('banks')
-          .update({
-            name: formData.name,
-            initial_capital: capitalValue,
-            updated_at: now
-          })
-          .eq('id', editingBank.id);
-        
-        if (error) throw error;
-      } else {
-        // Criar nova banca
-        const newBank = {
-          name: formData.name,
-          initial_capital: capitalValue,
-          roi: 0,
-          gross_profit: 0,
-          user_id: user?.id,
-          created_at: now,
-          updated_at: now
-        };
-        
-        const { error } = await supabase
-          .from('banks')
-          .insert([newBank]);
-        
-        if (error) throw error;
-      }
-      
-      // Recarregar bancas e limpar formulário
-      await fetchBanks();
-      setFormData({ name: '', initialCapital: '' });
-      setIsModalOpen(false);
-      setEditingBank(null);
-      
-    } catch (error) {
-      console.error('Erro ao salvar banca:', error);
+    // Parse the currency string to a number
+    const capitalValue = parseCurrencyValue(formData.initialCapital);
+    
+    if (editingBank) {
+      setBanks(banks.map(bank => 
+        bank.id === editingBank.id 
+          ? {
+              ...bank,
+              name: formData.name,
+              initialCapital: capitalValue
+            }
+          : bank
+      ));
+    } else {
+      const newBank: Bank = {
+        id: Date.now().toString(),
+        name: formData.name,
+        initialCapital: capitalValue,
+        roi: 0,
+        grossProfit: 0
+      };
+      setBanks([...banks, newBank]);
     }
+
+    setFormData({ name: '', initialCapital: '' });
+    setIsModalOpen(false);
+    setEditingBank(null);
   };
 
   const handleEdit = (e: React.MouseEvent, bank: Bank) => {
-    e.stopPropagation(); // Evitar navegação ao clicar no botão de editar
+    e.stopPropagation(); // Prevent navigation when clicking the edit button
     setEditingBank(bank);
     
-    // Formatar o valor para exibição no formulário
-    const formattedCapital = formatCurrencyInput((bank.initial_capital * 100).toString());
+    // Format the number to currency for display in the form
+    const formattedCapital = formatCurrencyInput((bank.initialCapital * 100).toString());
     
     setFormData({
       name: bank.name,
@@ -149,7 +113,7 @@ const MinhasBancas: React.FC = () => {
   };
 
   const calculateOperatingCapital = (bank: Bank) => {
-    return bank.initial_capital + bank.gross_profit;
+    return bank.initialCapital + bank.grossProfit;
   };
 
   return (
@@ -169,64 +133,52 @@ const MinhasBancas: React.FC = () => {
         </button>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center items-center h-64">
-          <p>Carregando bancas...</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {banks.length === 0 ? (
-            <div className="col-span-full text-center p-8">
-              <p className="text-gray-500">Você ainda não possui bancas. Clique em "Adicionar Banca" para começar.</p>
-            </div>
-          ) : (
-            banks.map(bank => (
-              <div
-                key={bank.id}
-                onClick={() => handleCardClick(bank.id)}
-                className="bg-white rounded-lg shadow-md p-6 cursor-pointer hover:shadow-lg transition-shadow duration-200"
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {banks.map(bank => (
+          <div
+            key={bank.id}
+            onClick={() => handleCardClick(bank.id)}
+            className="bg-white rounded-lg shadow-md p-6 cursor-pointer hover:shadow-lg transition-shadow duration-200"
+          >
+            <div className="flex justify-between items-start mb-4">
+              <h2 className="text-xl font-semibold text-gray-800">{bank.name}</h2>
+              <button
+                onClick={(e) => handleEdit(e, bank)}
+                className="p-2 hover:bg-gray-100 rounded-full transition-colors duration-200"
+                title="Editar banca"
               >
-                <div className="flex justify-between items-start mb-4">
-                  <h2 className="text-xl font-semibold text-gray-800">{bank.name}</h2>
-                  <button
-                    onClick={(e) => handleEdit(e, bank)}
-                    className="p-2 hover:bg-gray-100 rounded-full transition-colors duration-200"
-                    title="Editar banca"
-                  >
-                    <Settings className="w-5 h-5 text-gray-600" />
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <p className="text-sm text-gray-600 mb-1">ROI</p>
-                    <p className="text-lg font-bold text-blue-600">{bank.roi}%</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 mb-1">Lucro Bruto</p>
-                    <p className="text-lg font-bold text-green-600">
-                      {formatCurrency(bank.gross_profit)}
-                    </p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-gray-600 mb-1">Aporte</p>
-                    <p className="text-lg font-bold text-purple-600">
-                      {formatCurrency(bank.initial_capital)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600 mb-1">Capital em Operação</p>
-                    <p className="text-lg font-bold text-indigo-600">
-                      {formatCurrency(calculateOperatingCapital(bank))}
-                    </p>
-                  </div>
-                </div>
+                <Settings className="w-5 h-5 text-gray-600" />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <p className="text-sm text-gray-600 mb-1">ROI</p>
+                <p className="text-lg font-bold text-blue-600">{bank.roi}%</p>
               </div>
-            ))
-          )}
-        </div>
-      )}
+              <div>
+                <p className="text-sm text-gray-600 mb-1">Lucro Bruto</p>
+                <p className="text-lg font-bold text-green-600">
+                  {formatCurrency(bank.grossProfit)}
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm text-gray-600 mb-1">Aporte</p>
+                <p className="text-lg font-bold text-purple-600">
+                  {formatCurrency(bank.initialCapital)}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600 mb-1">Capital em Operação</p>
+                <p className="text-lg font-bold text-indigo-600">
+                  {formatCurrency(calculateOperatingCapital(bank))}
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
