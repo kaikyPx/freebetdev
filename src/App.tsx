@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { LayoutDashboard, Users, ClipboardList, Kanban as LayoutKanban } from 'lucide-react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
 import Login from './components/Login';
+import Register from './components/Register';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import CPFAccounts from './components/CPFAccounts';
@@ -10,56 +10,284 @@ import ControleGeral from './components/ControleGeral';
 import Organization from './components/Organization';
 import MinhasBancas from './components/MinhasBancas';
 import Fintech from './components/Fintech';
+import { authService } from './services/supabaseService';
+
+// Componente de proteção de rotas
+interface ProtectedRouteProps {
+  children: React.ReactNode;
+  isAuthenticated: boolean;
+}
+
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, isAuthenticated }) => {
+  const location = useLocation();
+  
+  if (!isAuthenticated) {
+    // Redirecionar para login e salvar o local atual para retornar depois do login
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  return <>{children}</>;
+};
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem('isAuthenticated') === 'true';
-  });
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState<{id: string, email: string} | null>(null);
+  const [showRegister, setShowRegister] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
+  // Verificar autenticação ao iniciar o app
   useEffect(() => {
-    localStorage.setItem('isAuthenticated', isAuthenticated.toString());
-  }, [isAuthenticated]);
+    const checkAuth = () => {
+      const tokenCheck = authService.verifyToken();
+      
+      if (tokenCheck.valid && tokenCheck.user) {
+        setIsAuthenticated(true);
+        setUser(tokenCheck.user);
+      } else {
+        // Limpar dados inválidos
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        localStorage.removeItem('isAuthenticated');
+        setIsAuthenticated(false);
+        setUser(null);
+      }
+      
+      setIsLoading(false);
+    };
+    
+    checkAuth();
+  }, []);
 
-  const handleLogin = (username: string, password: string) => {
-    if (username === "admin" && password === "admin123") {
-      setIsAuthenticated(true);
-    } else {
-      alert("Credenciais inválidas!");
+  const handleLogin = async (email: string, password: string) => {
+    setIsLoading(true);
+    try {
+      const response = await authService.login(email, password);
+      
+      if (response.success && response.user && response.token) {
+        setUser(response.user);
+        setIsAuthenticated(true);
+        // Armazenar o token para solicitações futuras
+        localStorage.setItem('token', response.token);
+        return true;
+      } else {
+        alert(response.message || "Credenciais inválidas!");
+        return false;
+      }
+    } catch (error) {
+      console.error("Erro durante o login:", error);
+      alert("Erro ao tentar fazer login. Tente novamente mais tarde.");
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRegister = async (email: string, password: string) => {
+    setIsLoading(true);
+    try {
+      const response = await authService.register(email, password);
+      
+      if (response.success && response.user && response.token) {
+        setUser(response.user);
+        setIsAuthenticated(true);
+        // Armazenar o token para solicitações futuras
+        localStorage.setItem('token', response.token);
+        return true;
+      } else {
+        alert(response.message || "Erro ao criar conta!");
+        return false;
+      }
+    } catch (error) {
+      console.error("Erro durante o registro:", error);
+      alert("Erro ao tentar criar conta. Tente novamente mais tarde.");
+      return false;
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleLogout = () => {
     setIsAuthenticated(false);
+    setUser(null);
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
     localStorage.removeItem('isAuthenticated');
   };
 
-  if (!isAuthenticated) {
-    return <Login onLogin={handleLogin} />;
+  // Mostrar carregamento inicial
+  if (isLoading && !isAuthenticated) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-gray-100">
+        <div className="text-center">
+          <div className="w-16 h-16 border-t-4 border-blue-500 border-solid rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Carregando...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
     <Router>
-      <div className="flex h-screen bg-gray-100">
-        <Sidebar 
-          onLogout={handleLogout} 
-          isCollapsed={isSidebarCollapsed} 
-          onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
-        />
-        <div className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/fintech" element={<Fintech />} />
-            <Route path="/fintech/qrcode" element={<div>QR Code Automático - Em desenvolvimento</div>} />
-            <Route path="/fintech/copytrade" element={<div>CopyTrade - Em desenvolvimento</div>} />
-            <Route path="/minhas-bancas" element={<MinhasBancas />} />
-            <Route path="/contas-cpf" element={<CPFAccounts />} />
-            <Route path="/controle-geral" element={<ControleGeral />} />
-            <Route path="/organization" element={<Organization />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </div>
-      </div>
+      <Routes>
+        {/* Rotas de autenticação */}
+        <Route path="/login" element={
+          isAuthenticated ? 
+            <Navigate to="/" replace /> : 
+            <Login 
+              onLogin={handleLogin} 
+              switchToRegister={() => setShowRegister(true)} 
+              isLoading={isLoading} 
+            />
+        } />
+        
+        <Route path="/register" element={
+          isAuthenticated ? 
+            <Navigate to="/" replace /> : 
+            <Register 
+              onRegister={handleRegister} 
+              switchToLogin={() => setShowRegister(false)} 
+              isLoading={isLoading} 
+            />
+        } />
+        
+        {/* Layout com Sidebar para usuários autenticados */}
+        <Route path="/" element={
+          <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <div className="flex h-screen bg-gray-100">
+              <Sidebar 
+                onLogout={handleLogout} 
+                isCollapsed={isSidebarCollapsed} 
+                onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+                user={user}
+              />
+              <div className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
+                <Dashboard user={user} />
+              </div>
+            </div>
+          </ProtectedRoute>
+        } />
+        
+        {/* Rotas protegidas com layout de Sidebar */}
+        <Route path="/fintech" element={
+          <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <div className="flex h-screen bg-gray-100">
+              <Sidebar 
+                onLogout={handleLogout} 
+                isCollapsed={isSidebarCollapsed} 
+                onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+                user={user}
+              />
+              <div className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
+                <Fintech />
+              </div>
+            </div>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/fintech/qrcode" element={
+          <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <div className="flex h-screen bg-gray-100">
+              <Sidebar 
+                onLogout={handleLogout} 
+                isCollapsed={isSidebarCollapsed} 
+                onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+                user={user}
+              />
+              <div className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
+                <div>QR Code Automático - Em desenvolvimento</div>
+              </div>
+            </div>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/fintech/copytrade" element={
+          <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <div className="flex h-screen bg-gray-100">
+              <Sidebar 
+                onLogout={handleLogout} 
+                isCollapsed={isSidebarCollapsed} 
+                onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+                user={user}
+              />
+              <div className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
+                <div>CopyTrade - Em desenvolvimento</div>
+              </div>
+            </div>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/minhas-bancas" element={
+          <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <div className="flex h-screen bg-gray-100">
+              <Sidebar 
+                onLogout={handleLogout} 
+                isCollapsed={isSidebarCollapsed} 
+                onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+                user={user}
+              />
+              <div className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
+                <MinhasBancas />
+              </div>
+            </div>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/contas-cpf" element={
+          <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <div className="flex h-screen bg-gray-100">
+              <Sidebar 
+                onLogout={handleLogout} 
+                isCollapsed={isSidebarCollapsed} 
+                onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+                user={user}
+              />
+              <div className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
+                <CPFAccounts />
+              </div>
+            </div>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/controle-geral" element={
+          <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <div className="flex h-screen bg-gray-100">
+              <Sidebar 
+                onLogout={handleLogout} 
+                isCollapsed={isSidebarCollapsed} 
+                onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+                user={user}
+              />
+              <div className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
+                <ControleGeral />
+              </div>
+            </div>
+          </ProtectedRoute>
+        } />
+        
+        <Route path="/organization" element={
+          <ProtectedRoute isAuthenticated={isAuthenticated}>
+            <div className="flex h-screen bg-gray-100">
+              <Sidebar 
+                onLogout={handleLogout} 
+                isCollapsed={isSidebarCollapsed} 
+                onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+                user={user}
+              />
+              <div className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
+                <Organization />
+              </div>
+            </div>
+          </ProtectedRoute>
+        } />
+        
+        {/* Redirecionar todas as outras rotas para a página principal */}
+        <Route path="*" element={
+          isAuthenticated ? 
+            <Navigate to="/" replace /> : 
+            <Navigate to="/login" replace />
+        } />
+      </Routes>
     </Router>
   );
 }
