@@ -15,6 +15,8 @@ import { Line } from 'react-chartjs-2';
 import { supabase } from '../lib/supabase';
 import { MonthlyBetCard } from './BetCard';
 import { BettingOperationForm } from './BettingOperationForm';
+import { useBanks } from '../hooks/useBanks';
+import { useBettingOperations } from '../hooks/useBettingOperations';
 
 ChartJS.register(
   CategoryScale,
@@ -26,14 +28,6 @@ ChartJS.register(
   Filler,
   Legend
 );
-
-interface Bank {
-  id: string;
-  name: string;
-  initialCapital: number;
-  roi: number;
-  grossProfit: number;
-}
 
 interface Filters {
   startDate: string;
@@ -65,12 +59,16 @@ const sportOptions = [
   { value: 'others', label: 'Outros' }
 ];
 
-const Dashboard = () => {
+interface DashboardProps {
+  user: { id: string; email: string } | null;
+}
+
+const Dashboard: React.FC<DashboardProps> = ({ user }) => {
+  // Use os hooks personalizados para obter os dados do Supabase
+  const { banks, loading: loadingBanks } = useBanks();
+  const { operations, monthlySummaries, loading: loadingOperations } = useBettingOperations();
+  
   const [selectedBank, setSelectedBank] = useState<string>('');
-  const [banks, setBanks] = useState<Bank[]>(() => {
-    const saved = localStorage.getItem('banks');
-    return saved ? JSON.parse(saved) : [];
-  });
   const [showFilters, setShowFilters] = useState(false);
   const [showOperationForm, setShowOperationForm] = useState(false);
   const [filters, setFilters] = useState<Filters>({
@@ -82,10 +80,57 @@ const Dashboard = () => {
     bettingHouse: 'all'
   });
   const [bettingHouses, setBettingHouses] = useState<Array<{ id: string; name: string }>>([]);
+  const [dashboardData, setDashboardData] = useState({
+    todayBets: 0,
+    todayBetsAverage: 0,
+    todayProfit: 0,
+    roi: 0,
+    profitPerAccount: 0,
+    accountsUsed: 0,
+    totalInvestment: 0,
+    profitData: {
+      labels: [] as string[],
+      datasets: [
+        {
+          label: 'Lucro Diário',
+          data: [] as any[],
+          fill: true,
+          borderColor: '#2563eb',
+          backgroundColor: (context: any) => {
+            const ctx = context.chart.ctx;
+            const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+            gradient.addColorStop(0, 'rgba(37, 99, 235, 0.2)');
+            gradient.addColorStop(1, 'rgba(37, 99, 235, 0)');
+            return gradient;
+          },
+          tension: 0.4,
+          pointRadius: 6,
+          pointBackgroundColor: '#2563eb',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointHoverRadius: 8,
+          pointHoverBackgroundColor: '#1d4ed8',
+          pointHoverBorderColor: '#fff',
+          pointHoverBorderWidth: 3,
+          borderWidth: 3
+        }
+      ]
+    }
+  });
 
   useEffect(() => {
     fetchBettingHouses();
   }, []);
+
+  // Atualiza os dados da dashboard quando mudar o banco selecionado
+  // ou quando os dados de operações forem carregados
+  useEffect(() => {
+    if (loadingOperations) return;
+    
+    // Se um banco estiver selecionado, filtra as operações para esse banco
+    // Caso contrário, usa todas as operações
+    updateDashboardData();
+  }, [selectedBank, operations, loadingOperations]);
 
   const fetchBettingHouses = async () => {
     try {
@@ -101,43 +146,83 @@ const Dashboard = () => {
     }
   };
 
-  // Sample data for the chart
-  const [profitData] = useState({
-    labels: [], // We'll hide these labels
-    datasets: [
-      {
-        label: 'Lucro Diário',
-        data: [
-          { x: '2024-03-01', y: 1500, bets: 5, accounts: 3, investment: 10000 },
-          { x: '2024-03-02', y: 2300, bets: 8, accounts: 4, investment: 10000 },
-          { x: '2024-03-03', y: 3100, bets: 6, accounts: 3, investment: 10000 },
-          { x: '2024-03-04', y: 2800, bets: 7, accounts: 5, investment: 10000 },
-          { x: '2024-03-05', y: 3800, bets: 9, accounts: 4, investment: 10000 },
-          { x: '2024-03-06', y: 4200, bets: 8, accounts: 6, investment: 10000 },
-          { x: '2024-03-07', y: 4900, bets: 10, accounts: 5, investment: 10000 }
-        ],
-        fill: true,
-        borderColor: '#2563eb',
-        backgroundColor: (context: any) => {
-          const ctx = context.chart.ctx;
-          const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-          gradient.addColorStop(0, 'rgba(37, 99, 235, 0.2)');
-          gradient.addColorStop(1, 'rgba(37, 99, 235, 0)');
-          return gradient;
-        },
-        tension: 0.4,
-        pointRadius: 6,
-        pointBackgroundColor: '#2563eb',
-        pointBorderColor: '#fff',
-        pointBorderWidth: 2,
-        pointHoverRadius: 8,
-        pointHoverBackgroundColor: '#1d4ed8',
-        pointHoverBorderColor: '#fff',
-        pointHoverBorderWidth: 3,
-        borderWidth: 3
+  const updateDashboardData = () => {
+    // Filtra operações pelo banco selecionado se necessário
+    const filteredOperations = selectedBank 
+      ? operations.filter(op => op.bank_id === selectedBank) 
+      : operations;
+    
+    // Organiza as operações por data
+    const sortedOperations = [...filteredOperations].sort((a, b) => 
+      new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+    
+    // Agrega os dados para o gráfico (últimos 7 dias ou menos)
+    const last7DaysData: any[] = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Cria entradas para os últimos 7 dias
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - i);
+      const dateString = date.toISOString().split('T')[0];
+      
+      // Filtra operações para esta data
+      const dayOperations = sortedOperations.filter(op => op.date === dateString);
+      
+      // Calcula métricas para o dia
+      const dayBets = dayOperations.length;
+      const dayBetAmount = dayOperations.reduce((sum, op) => sum + op.bet_amount, 0);
+      const dayResult = dayOperations.reduce((sum, op) => sum + op.result, 0);
+      const dayProfit = dayOperations.reduce((sum, op) => sum + op.profit, 0);
+      
+      // Determina quantas contas únicas foram usadas neste dia
+      const uniqueAccounts = new Set();
+      dayOperations.forEach(op => {
+        // Presumimos que há uma tabela de relacionamento operation_accounts
+        // que liga operações às contas usadas
+        // Como não temos acesso direto a isso aqui, usamos um valor estimado
+        uniqueAccounts.add(op.id); // Substitua por lógica real se possível
+      });
+      
+      last7DaysData.push({
+        x: dateString,
+        y: dayProfit,
+        bets: dayBets,
+        accounts: uniqueAccounts.size || 1, // Evitar divisão por zero
+        investment: dayBetAmount
+      });
+    }
+    
+    // Calcula métricas totais
+    const todayData = last7DaysData[last7DaysData.length - 1] || { y: 0, bets: 0, accounts: 1, investment: 0 };
+    const todayBets = todayData.bets;
+    const todayBetsAverage = todayData.bets > 0 ? todayData.y / todayData.bets : 0;
+    const todayProfit = todayData.y;
+    const roi = todayData.investment > 0 ? (todayData.y / todayData.investment) * 100 : 0;
+    const profitPerAccount = todayData.accounts > 0 ? todayData.y / todayData.accounts : 0;
+    
+    // Atualiza o estado da dashboard
+    setDashboardData({
+      todayBets,
+      todayBetsAverage,
+      todayProfit,
+      roi,
+      profitPerAccount,
+      accountsUsed: todayData.accounts,
+      totalInvestment: todayData.investment,
+      profitData: {
+        labels: last7DaysData.map(d => d.x),
+        datasets: [
+          {
+            ...dashboardData.profitData.datasets[0],
+            data: last7DaysData
+          }
+        ]
       }
-    ]
-  });
+    });
+  };
 
   const options = {
     responsive: true,
@@ -211,116 +296,83 @@ const Dashboard = () => {
           stepSize: 1000
         },
         min: 0,
-        max: 5000,
+        max: Math.max(5000, ...dashboardData.profitData.datasets[0].data.map((d: any) => d.y || 0)),
         suggestedMin: 0,
-        suggestedMax: 5000
+        suggestedMax: Math.max(5000, ...dashboardData.profitData.datasets[0].data.map((d: any) => d.y || 0))
       }
     }
   };
 
-  // Calculate metrics
-  const todayData = profitData.datasets[0].data[profitData.datasets[0].data.length - 1];
-  
-  const todayBets = todayData.bets;
-  const todayBetsAverage = todayData.y / todayBets;
-  const todayProfit = todayData.y;
-  const roi = (todayData.y / todayData.investment) * 100;
-  const profitPerAccount = todayData.y / todayData.accounts;
-
   const handleBankChange = (bankId: string) => {
     setSelectedBank(bankId);
-    // Here you would fetch and update the dashboard data based on the selected bank
+    // A atualização dos dados é feita pelo useEffect
   };
 
   const handleFilterSubmit = () => {
-    // Here you would apply the filters and update the data
+    // Aqui você aplicaria os filtros e atualizaria os dados
     console.log('Applying filters:', filters);
     setShowFilters(false);
+    // Implemente a lógica de filtro aqui
   };
 
-  // Sample data organized by month and day
-  const sampleBetsByMonth = [
-    {
-      month: 'Março 2024',
-      days: [
-        {
-          date: '23 de Março',
-          bets: [
-            {
-              date: '23/03/2024',
-              time: '15:30',
-              gameName: 'Manchester City vs Arsenal',
-              house1: 'bet365',
-              house2: 'Betano',
-              betAmount: 1000,
-              result: 1200,
-              profit: 200
-            },
-            {
-              date: '23/03/2024',
-              time: '16:45',
-              gameName: 'PSG vs Lyon',
-              house1: 'Betano',
-              house2: 'bet365',
-              betAmount: 800,
-              result: 750,
-              profit: -50
-            }
-          ]
-        },
-        {
-          date: '22 de Março',
-          bets: [
-            {
-              date: '22/03/2024',
-              time: '16:30',
-              gameName: 'Liverpool vs Chelsea',
-              house1: 'bet365',
-              house2: 'Betano',
-              betAmount: 1200,
-              result: 1000,
-              profit: -200
-            }
-          ]
-        }
-      ]
-    },
-    {
-      month: 'Fevereiro 2024',
-      days: [
-        {
-          date: '15 de Fevereiro',
-          bets: [
-            {
-              date: '15/02/2024',
-              time: '16:30',
-              gameName: 'Real Madrid vs Barcelona',
-              house1: 'bet365',
-              house2: 'Betano',
-              betAmount: 1500,
-              result: 1800,
-              profit: 300
-            }
-          ]
-        },
-        {
-          date: '10 de Fevereiro',
-          bets: [
-            {
-              date: '10/02/2024',
-              time: '14:00',
-              gameName: 'Liverpool vs Chelsea',
-              house1: 'Betano',
-              house2: 'bet365',
-              betAmount: 1200,
-              result: 1000,
-              profit: -200
-            }
-          ]
-        }
-      ]
-    }
-  ];
+  // Organiza os dados por mês e dia para exibição
+  const organizeBetsByMonth = () => {
+    const months: Record<string, any> = {};
+    
+    // Percorre todas as operações e organiza por mês e dia
+    operations.forEach(op => {
+      // Se um banco estiver selecionado e não for o mesmo, pula
+      if (selectedBank && op.bank_id !== selectedBank) return;
+      
+      const date = new Date(op.date);
+      const monthKey = date.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+      const dayKey = date.getDate() + ' de ' + date.toLocaleString('pt-BR', { month: 'long' });
+      
+      // Inicializa o mês se ainda não existir
+      if (!months[monthKey]) {
+        months[monthKey] = {
+          month: monthKey,
+          days: {}
+        };
+      }
+      
+      // Inicializa o dia se ainda não existir
+      if (!months[monthKey].days[dayKey]) {
+        months[monthKey].days[dayKey] = {
+          date: dayKey,
+          bets: []
+        };
+      }
+      
+      // Busca os nomes das casas de apostas
+      const house1 = bettingHouses.find(h => h.id === op.house1_id)?.name || op.house1_id;
+      const house2 = bettingHouses.find(h => h.id === op.house2_id)?.name || op.house2_id;
+      
+      // Adiciona a aposta ao dia
+      months[monthKey].days[dayKey].bets.push({
+        id: op.id,
+        date: op.date.split('-').reverse().join('/'),
+        time: op.time,
+        gameName: op.game_name,
+        house1: house1,
+        house2: house2,
+        betAmount: op.bet_amount,
+        result: op.result,
+        profit: op.profit,
+        status: op.status
+      });
+    });
+    
+    // Converte o objeto para o formato array esperado pelo componente
+    const result = Object.values(months).map(month => ({
+      month: month.month,
+      days: Object.values(month.days).map((day: any) => day)
+    }));
+    
+    return result;
+  };
+
+  const betsByMonth = organizeBetsByMonth();
 
   return (
     <div className="flex-1 p-4 lg:p-6 bg-gray-50">
@@ -336,7 +388,7 @@ const Dashboard = () => {
               value={selectedBank}
               onChange={(e) => handleBankChange(e.target.value)}
             >
-              <option value="">Selecione uma banca</option>
+              <option value="">Todas as bancas</option>
               {banks.map(bank => (
                 <option key={bank.id} value={bank.id}>
                   {bank.name}
@@ -364,94 +416,118 @@ const Dashboard = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-3 mb-4">
-        <div className="bg-white rounded-lg shadow-sm p-2.5 border border-gray-100">
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col">
-              <div className="flex items-center gap-1">
-                <span className="text-gray-500 text-xs font-medium">Apostas</span>
-                <span className="text-gray-400 text-[10px] hidden sm:inline">
-                  (Média: {todayBetsAverage.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })})
-                </span>
-              </div>
-              <div className="text-lg font-bold text-gray-800 mt-0.5">
-                {todayBets} apostas
+      {loadingBanks || loadingOperations ? (
+        <div className="flex justify-center items-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-3 mb-4">
+            <div className="bg-white rounded-lg shadow-sm p-2.5 border border-gray-100">
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-1">
+                    <span className="text-gray-500 text-xs font-medium">Apostas</span>
+                    <span className="text-gray-400 text-[10px] hidden sm:inline">
+                      (Média: {dashboardData.todayBetsAverage.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })})
+                    </span>
+                  </div>
+                  <div className="text-lg font-bold text-gray-800 mt-0.5">
+                    {dashboardData.todayBets} apostas
+                  </div>
+                </div>
+                <div className="bg-blue-100 p-1.5 rounded-lg">
+                  <TrendingUp className="w-3.5 h-3.5 text-blue-600" />
+                </div>
               </div>
             </div>
-            <div className="bg-blue-100 p-1.5 rounded-lg">
-              <TrendingUp className="w-3.5 h-3.5 text-blue-600" />
+
+            <div className="bg-white rounded-lg shadow-sm p-2.5 border border-gray-100">
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-1">
+                    <span className="text-gray-500 text-xs font-medium">Lucro</span>
+                    <span className="text-gray-400 text-[10px] hidden sm:inline">(Hoje)</span>
+                  </div>
+                  <div className="text-lg font-bold text-gray-800 mt-0.5">
+                    {dashboardData.todayProfit.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  </div>
+                </div>
+                <div className="bg-green-100 p-1.5 rounded-lg">
+                  <DollarSign className="w-3.5 h-3.5 text-green-600" />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-sm p-2.5 border border-gray-100">
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-1">
+                    <span className="text-gray-500 text-xs font-medium">ROI</span>
+                    <span className="text-gray-400 text-[10px] hidden sm:inline">(Retorno)</span>
+                  </div>
+                  <div className="text-lg font-bold text-gray-800 mt-0.5">
+                    {dashboardData.roi.toFixed(2)}%
+                  </div>
+                </div>
+                <div className="bg-purple-100 p-1.5 rounded-lg">
+                  <Percent className="w-3.5 h-3.5 text-purple-600" />
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-sm p-2.5 border border-gray-100">
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-1">
+                    <span className="text-gray-500 text-xs font-medium">Média por CPF</span>
+                    <span className="text-gray-400 text-[10px] hidden sm:inline">({dashboardData.accountsUsed} contas)</span>
+                  </div>
+                  <div className="text-lg font-bold text-gray-800 mt-0.5">
+                    {dashboardData.profitPerAccount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  </div>
+                </div>
+                <div className="bg-orange-100 p-1.5 rounded-lg">
+                  <Calendar className="w-3.5 h-3.5 text-orange-600" />
+                </div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="bg-white rounded-lg shadow-sm p-2.5 border border-gray-100">
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col">
-              <div className="flex items-center gap-1">
-                <span className="text-gray-500 text-xs font-medium">Lucro</span>
-                <span className="text-gray-400 text-[10px] hidden sm:inline">(Hoje)</span>
-              </div>
-              <div className="text-lg font-bold text-gray-800 mt-0.5">
-                {todayProfit.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-              </div>
-            </div>
-            <div className="bg-green-100 p-1.5 rounded-lg">
-              <DollarSign className="w-3.5 h-3.5 text-green-600" />
+          <div className="bg-white rounded-lg shadow-sm p-3 lg:p-4 border border-gray-100 mb-4">
+            <div className="h-[300px]">
+              <Line data={dashboardData.profitData} options={options} />
             </div>
           </div>
-        </div>
 
-        <div className="bg-white rounded-lg shadow-sm p-2.5 border border-gray-100">
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col">
-              <div className="flex items-center gap-1">
-                <span className="text-gray-500 text-xs font-medium">ROI</span>
-                <span className="text-gray-400 text-[10px] hidden sm:inline">(Retorno)</span>
+          {/* Monthly Bet Cards */}
+          <div className="space-y-4">
+            {betsByMonth.length > 0 ? (
+              betsByMonth.map((monthData, index) => (
+                <MonthlyBetCard
+                  key={index}
+                  month={monthData.month}
+                  days={monthData.days}
+                  onEditBet={(betId) => {
+                    console.log('Editar aposta:', betId);
+                    // Implementar lógica de edição
+                  }}
+                />
+              ))
+            ) : (
+              <div className="text-center py-8 bg-white rounded-lg shadow-sm p-6">
+                <p className="text-gray-600">Nenhuma operação encontrada</p>
+                <button
+                  onClick={() => setShowOperationForm(true)}
+                  className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                  Registrar sua primeira operação
+                </button>
               </div>
-              <div className="text-lg font-bold text-gray-800 mt-0.5">
-                {roi.toFixed(2)}%
-              </div>
-            </div>
-            <div className="bg-purple-100 p-1.5 rounded-lg">
-              <Percent className="w-3.5 h-3.5 text-purple-600" />
-            </div>
+            )}
           </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-sm p-2.5 border border-gray-100">
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col">
-              <div className="flex items-center gap-1">
-                <span className="text-gray-500 text-xs font-medium">Média por CPF</span>
-                <span className="text-gray-400 text-[10px] hidden sm:inline">({todayData.accounts} contas)</span>
-              </div>
-              <div className="text-lg font-bold text-gray-800 mt-0.5">
-                {profitPerAccount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-              </div>
-            </div>
-            <div className="bg-orange-100 p-1.5 rounded-lg">
-              <Calendar className="w-3.5 h-3.5 text-orange-600" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-lg shadow-sm p-3 lg:p-4 border border-gray-100 mb-4">
-        <div className="h-[300px]">
-          <Line data={profitData} options={options} />
-        </div>
-      </div>
-
-      {/* Monthly Bet Cards */}
-      <div className="space-y-4">
-        {sampleBetsByMonth.map((monthData, index) => (
-          <MonthlyBetCard
-            key={index}
-            month={monthData.month}
-            days={monthData.days}
-          />
-        ))}
-      </div>
+        </>
+      )}
 
       {/* Filters Sidebar */}
       {showFilters && (
@@ -567,9 +643,12 @@ const Dashboard = () => {
         <BettingOperationForm
           onClose={() => setShowOperationForm(false)}
           onSuccess={() => {
-            // Refresh data after successful operation creation
-            // You would implement this based on your data fetching logic
+            // Atualizar os dados após registrar uma operação bem-sucedida
+            updateDashboardData();
+            setShowOperationForm(false);
           }}
+          selectedBank={selectedBank}
+          banks={banks}
         />
       )}
     </div>

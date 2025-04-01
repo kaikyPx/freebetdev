@@ -154,18 +154,18 @@ function App() {
         {/* Layout com Sidebar para usuários autenticados */}
         <Route path="/" element={
           <ProtectedRoute isAuthenticated={isAuthenticated}>
-            <div className="flex h-screen bg-gray-100">
-              <Sidebar 
-                onLogout={handleLogout} 
-                isCollapsed={isSidebarCollapsed} 
-                onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
-                user={user}
-              />
-              <div className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
-                <Dashboard user={user} />
-              </div>
+          <div className="flex h-screen bg-gray-100">
+            <Sidebar 
+              onLogout={handleLogout} 
+              isCollapsed={isSidebarCollapsed} 
+              onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
+              user={user}
+            />
+            <div className={`flex-1 transition-all duration-300 ${isSidebarCollapsed ? 'ml-20' : 'ml-64'}`}>
+              <Dashboard user={user} />
             </div>
-          </ProtectedRoute>
+          </div>
+        </ProtectedRoute>
         } />
         
         {/* Rotas protegidas com layout de Sidebar */}
