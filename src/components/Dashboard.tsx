@@ -316,17 +316,36 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   };
 
   // Organiza os dados por mês e dia para exibição
-  const organizeBetsByMonth = () => {
-    const months: Record<string, any> = {};
+ // Organiza os dados por mês e dia para exibição
+// Organiza os dados por mês e dia para exibição
+// Organiza os dados por mês e dia para exibição
+const organizeBetsByMonth = () => {
+  const months: Record<string, any> = {};
+  
+  // Log para debugging
+  console.log("Organizando operações:", operations.length, "operações");
+  
+  // Percorre todas as operações e organiza por mês e dia
+  operations.forEach(op => {
+    // Se um banco estiver selecionado e não for o mesmo, pula
+    if (selectedBank && op.bank_id !== selectedBank) return;
     
-    // Percorre todas as operações e organiza por mês e dia
-    operations.forEach(op => {
-      // Se um banco estiver selecionado e não for o mesmo, pula
-      if (selectedBank && op.bank_id !== selectedBank) return;
-      
+    try {
+      // Cria um objeto Date a partir da data da operação
       const date = new Date(op.date);
-      const monthKey = date.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
-      const dayKey = date.getDate() + ' de ' + date.toLocaleString('pt-BR', { month: 'long' });
+      
+      // Verifica se a data é válida
+      if (isNaN(date.getTime())) {
+        console.error("Data inválida:", op.date);
+        return;
+      }
+      
+      // Cria a chave para o mês no formato "Abril 2025" (sem o "de")
+      const monthKey = date.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })
+                          .replace(' de ', ' '); // Remove o "de" se existir
+      
+      // Formata a data no padrão DD/MM/YYYY para consistência
+      const dayKey = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()}`;
       
       // Inicializa o mês se ainda não existir
       if (!months[monthKey]) {
@@ -339,7 +358,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       // Inicializa o dia se ainda não existir
       if (!months[monthKey].days[dayKey]) {
         months[monthKey].days[dayKey] = {
-          date: dayKey,
+          date: dayKey, // Usa o formato consistente DD/MM/YYYY
           bets: []
         };
       }
@@ -351,26 +370,36 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
       // Adiciona a aposta ao dia
       months[monthKey].days[dayKey].bets.push({
         id: op.id,
-        date: op.date.split('-').reverse().join('/'),
-        time: op.time,
-        gameName: op.game_name,
+        date: dayKey, // Formato consistente DD/MM/YYYY
+        time: op.time || '00:00',
+        gameName: op.game_name || 'Sem nome',
         house1: house1,
         house2: house2,
-        betAmount: op.bet_amount,
-        result: op.result,
-        profit: op.profit,
-        status: op.status
+        betAmount: op.bet_amount || 0,
+        result: op.result || 0,
+        profit: op.profit || 0,
+        status: op.status || 'Pendente'
       });
-    });
+    } catch (e) {
+      console.error("Erro ao processar operação:", e, op);
+    }
+  });
+  
+  // Converte o objeto para o formato array esperado pelo componente
+  const monthsArray = Object.values(months).map(month => {
+    // Converte o objeto de dias para um array
+    const daysArray = Object.values(month.days);
     
-    // Converte o objeto para o formato array esperado pelo componente
-    const result = Object.values(months).map(month => ({
+    // Retorna o mês com o array de dias
+    return {
       month: month.month,
-      days: Object.values(month.days).map((day: any) => day)
-    }));
-    
-    return result;
-  };
+      days: daysArray
+    };
+  });
+  
+  console.log("Meses organizados:", monthsArray);
+  return monthsArray;
+};
 
   const betsByMonth = organizeBetsByMonth();
 

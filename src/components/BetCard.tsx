@@ -69,16 +69,48 @@ function parseStringToDate(dateStr: string): Date {
 
 // Gets all days in a month, returning Date objects
 function getDaysInMonth(monthStr: string): Date[] {
-  const [monthName, yearStr] = monthStr.split(' ');
   const monthMap: { [key: string]: number } = {
+    'janeiro': 0, 'fevereiro': 1, 'março': 2, 'abril': 3,
+    'maio': 4, 'junho': 5, 'julho': 6, 'agosto': 7,
+    'setembro': 8, 'outubro': 9, 'novembro': 10, 'dezembro': 11,
+    // Versões capitalizadas também
     'Janeiro': 0, 'Fevereiro': 1, 'Março': 2, 'Abril': 3,
     'Maio': 4, 'Junho': 5, 'Julho': 6, 'Agosto': 7,
     'Setembro': 8, 'Outubro': 9, 'Novembro': 10, 'Dezembro': 11
   };
   
+  // Normaliza a entrada para lidar com formatos como "abril de 2025"
+  const normalizedStr = monthStr.replace(/ de /, " ");
+  
+  // Divide a string em palavras
+  const parts = normalizedStr.split(' ');
+  
+  // Último elemento é o ano
+  const yearStr = parts[parts.length - 1];
+  
+  // Tudo antes do último elemento é o nome do mês
+  const monthName = parts.slice(0, parts.length - 1).join(' ').toLowerCase();
+  
+  // Converte para números
   const year = parseInt(yearStr);
   const month = monthMap[monthName];
   
+  // Verifica se ano e mês são válidos
+  if (isNaN(year) || month === undefined) {
+    console.error(`Não foi possível analisar o mês e ano de "${monthStr}". Mês: "${monthName}", Ano: "${yearStr}"`);
+    // Usa data atual como fallback
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    
+    const days: Date[] = [];
+    for (let d = new Date(firstDay); d <= lastDay; d.setDate(d.getDate() + 1)) {
+      days.push(new Date(d));
+    }
+    return days;
+  }
+  
+  // Gera os dias do mês
   const firstDay = new Date(year, month, 1);
   const lastDay = new Date(year, month + 1, 0);
   
@@ -90,6 +122,7 @@ function getDaysInMonth(monthStr: string): Date[] {
   return days;
 }
 
+
 export const MonthlyBetCard: React.FC<MonthlyCardProps> = ({ month, days }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showDetails, setShowDetails] = useState(true);
@@ -98,10 +131,17 @@ export const MonthlyBetCard: React.FC<MonthlyCardProps> = ({ month, days }) => {
   // Get all days in the month as Date objects
   const allDaysInMonth = getDaysInMonth(month);
   
-  // Create a map of all days data using the date as key
+  // Ensure consistent date format for mapping (using DD/MM/YYYY format)
   const daysMap = new Map(days.map(day => {
-    // Ensure we're dealing with a consistent date format
-    return [day.date, day];
+    // Make sure the date is in the consistent DD/MM/YYYY format
+    const formattedDate = day.date.includes('/')
+      ? day.date // already in DD/MM/YYYY
+      : formatDateFromLocale(day.date); // convert from "12 de Março" to DD/MM/YYYY
+    
+    return [formattedDate, {
+      ...day,
+      date: formattedDate
+    }];
   }));
 
   // Create a complete array of all days in the month with data
@@ -126,6 +166,25 @@ export const MonthlyBetCard: React.FC<MonthlyCardProps> = ({ month, days }) => {
   const expandedDayBets = expandedDay ? 
     (daysMap.get(expandedDay)?.bets || []) : 
     [];
+
+  // Helper function to convert from locale date format to DD/MM/YYYY
+  function formatDateFromLocale(localeDate: string): string {
+    // Convert "12 de Março" to DD/MM/YYYY
+    const parts = localeDate.split(' de ');
+    if (parts.length === 2) {
+      const day = parts[0].padStart(2, '0');
+      const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 
+                          'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+      const monthIndex = monthNames.findIndex(m => m === parts[1]) + 1;
+      const month = String(monthIndex).padStart(2, '0');
+      // Extract year from the month string
+      const [monthName, yearStr] = month.split(' ');
+      const year = new Date().getFullYear(); // Fallback to current year if not available
+      
+      return `${day}/${month}/${year}`;
+    }
+    return localeDate; // Return as is if format is unexpected
+  }
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
