@@ -5,6 +5,7 @@ import { useBettingHouses } from '../hooks/useBettingHouses';
 import { formatCurrency } from '../utils/currency';
 
 interface BetCardProps {
+  id?: string;
   date: string;
   time: string;
   gameName: string;
@@ -13,6 +14,7 @@ interface BetCardProps {
   betAmount: number;
   result: number;
   profit: number;
+  status?: string;
 }
 
 interface DayCardProps {
@@ -54,6 +56,18 @@ const statusOptions = [
   { value: 'Pendente', color: 'bg-red-100 text-red-800' }
 ];
 
+// Format a Date object to DD/MM/YYYY
+function formatDateToString(date: Date): string {
+  return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()}`;
+}
+
+// Parse a string date in format DD/MM/YYYY to a Date object
+function parseStringToDate(dateStr: string): Date {
+  const [day, month, year] = dateStr.split('/').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+// Gets all days in a month, returning Date objects
 function getDaysInMonth(monthStr: string): Date[] {
   const [monthName, yearStr] = monthStr.split(' ');
   const monthMap: { [key: string]: number } = {
@@ -76,22 +90,21 @@ function getDaysInMonth(monthStr: string): Date[] {
   return days;
 }
 
-function formatDateToString(date: Date): string {
-  return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()}`;
-}
-
 export const MonthlyBetCard: React.FC<MonthlyCardProps> = ({ month, days }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showDetails, setShowDetails] = useState(true);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
 
+  // Get all days in the month as Date objects
   const allDaysInMonth = getDaysInMonth(month);
   
+  // Create a map of all days data using the date as key
   const daysMap = new Map(days.map(day => {
-    const dateStr = day.date.split(' ')[0];
-    return [dateStr, day];
+    // Ensure we're dealing with a consistent date format
+    return [day.date, day];
   }));
 
+  // Create a complete array of all days in the month with data
   const completeDays = allDaysInMonth.map(date => {
     const dateStr = formatDateToString(date);
     return daysMap.get(dateStr) || {
@@ -100,6 +113,7 @@ export const MonthlyBetCard: React.FC<MonthlyCardProps> = ({ month, days }) => {
     };
   });
 
+  // Calculate totals for the month
   const totalBetAmount = days.reduce((sum, day) => 
     sum + day.bets.reduce((daySum, bet) => daySum + bet.betAmount, 0), 0);
   const totalResult = days.reduce((sum, day) => 
@@ -108,48 +122,10 @@ export const MonthlyBetCard: React.FC<MonthlyCardProps> = ({ month, days }) => {
     sum + day.bets.reduce((daySum, bet) => daySum + bet.profit, 0), 0);
   const roi = totalBetAmount > 0 ? (totalProfit / totalBetAmount) * 100 : 0;
 
-  const exampleBets = {
-    '22/03/2024': {
-      date: '22/03/2024',
-      bets: [
-        {
-          date: '22/03/2024',
-          time: '16:30',
-          gameName: 'Liverpool vs Chelsea',
-          house1: 'bet365',
-          house2: 'Betano',
-          betAmount: 1200,
-          result: 1000,
-          profit: -200
-        }
-      ]
-    },
-    '23/03/2024': {
-      date: '23/03/2024',
-      bets: [
-        {
-          date: '23/03/2024',
-          time: '15:30',
-          gameName: 'Manchester City vs Arsenal',
-          house1: 'bet365',
-          house2: 'Betano',
-          betAmount: 1000,
-          result: 1200,
-          profit: 200
-        },
-        {
-          date: '23/03/2024',
-          time: '16:45',
-          gameName: 'PSG vs Lyon',
-          house1: 'Betano',
-          house2: 'bet365',
-          betAmount: 800,
-          result: 750,
-          profit: -50
-        }
-      ]
-    }
-  };
+  // Get bets for the expanded day
+  const expandedDayBets = expandedDay ? 
+    (daysMap.get(expandedDay)?.bets || []) : 
+    [];
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
@@ -220,25 +196,20 @@ export const MonthlyBetCard: React.FC<MonthlyCardProps> = ({ month, days }) => {
       {isExpanded && (
         <div className="border-t border-gray-200 p-2">
           <div className="grid grid-cols-7 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-1">
-            {completeDays.map((day, index) => {
-              const exampleDay = exampleBets[day.date];
-              const dayData = exampleDay || day;
-              
-              return (
-                <div key={index} className="flex flex-col">
-                  <DayCard 
-                    {...dayData} 
-                    showDetails={showDetails}
-                    isExpanded={expandedDay === dayData.date}
-                    onToggle={() => setExpandedDay(expandedDay === dayData.date ? null : dayData.date)}
-                  />
-                </div>
-              );
-            })}
+            {completeDays.map((day, index) => (
+              <div key={index} className="flex flex-col">
+                <DayCard 
+                  {...day} 
+                  showDetails={showDetails}
+                  isExpanded={expandedDay === day.date}
+                  onToggle={() => setExpandedDay(expandedDay === day.date ? null : day.date)}
+                />
+              </div>
+            ))}
           </div>
-          {expandedDay && (
+          {expandedDay && expandedDayBets.length > 0 && (
             <div className="mt-4 border-t border-gray-200 pt-4">
-              {(exampleBets[expandedDay]?.bets || []).map((bet, index) => (
+              {expandedDayBets.map((bet, index) => (
                 <BetCard key={index} {...bet} />
               ))}
             </div>
@@ -257,6 +228,8 @@ const DayCard: React.FC<DayCardProps & {
   const totalBetAmount = bets.reduce((sum, bet) => sum + bet.betAmount, 0);
   const totalProfit = bets.reduce((sum, bet) => sum + bet.profit, 0);
   const roi = totalBetAmount > 0 ? (totalProfit / totalBetAmount) * 100 : 0;
+  
+  // Extract just the day number (DD) from the date string (DD/MM/YYYY)
   const dayNumber = date.split('/')[0];
   const hasBets = bets.length > 0;
 
@@ -297,6 +270,7 @@ const DayCard: React.FC<DayCardProps & {
 };
 
 export const BetCard: React.FC<BetCardProps> = ({
+  id,
   date,
   time,
   gameName,
@@ -304,7 +278,8 @@ export const BetCard: React.FC<BetCardProps> = ({
   house2,
   betAmount,
   result,
-  profit
+  profit,
+  status
 }) => {
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -610,7 +585,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               {gameName}
             </span>
             <select
-              value={operationForms[Object.keys(operationForms)[0]]?.status || 'Em Operação'}
+              value={operationForms[Object.keys(operationForms)[0]]?.status || status || 'Em Operação'}
               onChange={(e) => {
                 const newStatus = e.target.value;
                 Object.keys(operationForms).forEach(accountId => {
@@ -618,7 +593,7 @@ export const BetCard: React.FC<BetCardProps> = ({
                 });
               }}
               className={`px-3 py-1 rounded-lg text-sm ${
-                statusOptions.find(opt => opt.value === operationForms[Object.keys(operationForms)[0]]?.status)?.color || 'bg-blue-100 text-blue-800'
+                statusOptions.find(opt => opt.value === (operationForms[Object.keys(operationForms)[0]]?.status || status))?.color || 'bg-blue-100 text-blue-800'
               }`}
             >
               {statusOptions.map(option => (
