@@ -107,12 +107,31 @@ function App() {
     }
   };
 
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    setUser(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('isAuthenticated');
+  const handleLogout = async () => {
+    try {
+      // Fazer logout no serviço de autenticação
+      await authService.logout(); // Assumindo que seu serviço tenha um método logout()
+      
+      // Limpar o estado
+      setIsAuthenticated(false);
+      setUser(null);
+      
+      // Limpar localStorage
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('isAuthenticated');
+      localStorage.removeItem('banks');
+      
+      // Forçar uma atualização completa da página
+      window.location.href = '/login';
+    } catch (error) {
+      console.error("Erro ao fazer logout:", error);
+      // Mesmo com erro, tente limpar os dados locais
+      setIsAuthenticated(false);
+      setUser(null);
+      localStorage.clear(); // Limpar tudo para garantir
+      window.location.href = '/login';
+    }
   };
 
   // Mostrar carregamento inicial

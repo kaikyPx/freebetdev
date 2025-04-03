@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { KeyRound, Loader } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 interface LoginProps {
   onLogin: (email: string, password: string) => Promise<boolean>;
@@ -11,6 +12,11 @@ const Login: React.FC<LoginProps> = ({ onLogin, switchToRegister, isLoading }) =
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const navigate = useNavigate();
+  const goToRegister = () => {
+    navigate('/register');
+  };
+  
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,12 +101,12 @@ const Login: React.FC<LoginProps> = ({ onLogin, switchToRegister, isLoading }) =
             <p className="text-sm text-gray-600">
               Não possui uma conta?{' '}
               <button 
-                type="button" 
-                onClick={switchToRegister}
-                className="text-blue-500 hover:text-blue-700 font-medium"
-              >
-                Registre-se
-              </button>
+      type="button" 
+      onClick={goToRegister}
+      className="text-blue-500 hover:text-blue-700 font-medium"
+    >
+      Registre-se
+    </button>
             </p>
           </div>
         </form>

@@ -2,18 +2,30 @@
 //Register.tsx
 import React, { useState } from 'react';
 import { UserPlus, Loader } from 'lucide-react';
+import { useNavigate } from 'react-router-dom'; // Importe o hook useNavigate
 
 interface RegisterProps {
   onRegister: (email: string, password: string) => Promise<boolean>;
   switchToLogin: () => void;
   isLoading: boolean;
 }
-
+interface RegisterProps {
+  onRegister: (email: string, password: string) => Promise<boolean>;
+  switchToLogin: () => void; // Podemos manter essa prop por compatibilidade
+  isLoading: boolean;
+}
 const Register: React.FC<RegisterProps> = ({ onRegister, switchToLogin, isLoading }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
+
+  const navigate = useNavigate();
+
+  // Função para navegar para a página de login
+  const goToLogin = () => {
+    navigate('/login');
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,12 +138,12 @@ const Register: React.FC<RegisterProps> = ({ onRegister, switchToLogin, isLoadin
             <p className="text-sm text-gray-600">
               Já possui uma conta?{' '}
               <button 
-                type="button" 
-                onClick={switchToLogin}
-                className="text-blue-500 hover:text-blue-700 font-medium"
-              >
-                Faça login
-              </button>
+            type="button" 
+            onClick={goToLogin} // Use a nova função em vez de switchToLogin
+            className="text-blue-500 hover:text-blue-700 font-medium"
+          >
+            Faça login
+          </button>
             </p>
           </div>
         </form>

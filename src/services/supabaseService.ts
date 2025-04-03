@@ -12,6 +12,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const SALT_ROUNDS = 10;
 
 export const authService = {
+
   async login(email: string, password: string) {
     try {
       // Verificar se o email existe
@@ -67,6 +68,11 @@ export const authService = {
         message: 'Erro no servidor: ' + (error instanceof Error ? error.message : String(error))
       };
     }
+  },
+
+  logout: async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
   },
 
   async register(email: string, password: string) {

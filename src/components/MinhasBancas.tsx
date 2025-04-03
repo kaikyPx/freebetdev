@@ -26,62 +26,74 @@ const MinhasBancas: React.FC = () => {
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
-  const [authChecked, setAuthChecked] = useState(false); // Add this state to track if auth check is complete
+  const [authChecked, setAuthChecked] = useState(false);
 
-  // Check for authenticated user and set userId
+  // Verifica o usuário autenticado e define userId
   useEffect(() => {
     checkUser();
     
-    // Subscribe to auth changes
+    // Inscreve-se para alterações de autenticação
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      async (_event, session) => {
         const user = session?.user;
         setUserId(user?.id || null);
-        setAuthChecked(true); // Mark auth check as complete regardless of result
+        setAuthChecked(true);
         
         if (user) {
-          fetchBanks(user.id);
+          await fetchBanks(user.id);
         } else {
           setBanks([]);
-          // Don't navigate here - only show login button
+          setLoading(false);
         }
       }
     );
 
     return () => {
-      // Clean up subscription
+      // Limpa a inscrição
       authListener.subscription.unsubscribe();
     };
   }, []);
 
-  // Check if user is authenticated
+  // Verifica se o usuário está autenticado
   const checkUser = async () => {
     try {
       const { data: { session }, error } = await supabase.auth.getSession();
       if (error) throw error;
 
       const user = session?.user;
-      setUserId(user?.id || null);
-      setAuthChecked(true); // Mark auth check as complete regardless of result
       
       if (user) {
-        fetchBanks(user.id);
+        console.log("Usuário autenticado:", user.id);
+        setUserId(user.id);
+        await fetchBanks(user.id);
       } else {
+        console.log("Nenhum usuário autenticado");
+        setUserId(null);
         setBanks([]);
         setLoading(false);
-        // Don't navigate here - we'll just show login button if needed
       }
+      
+      setAuthChecked(true);
     } catch (error) {
-      console.error('Error checking user:', error);
+      console.error('Erro ao verificar usuário:', error);
       setLoading(false);
-      setAuthChecked(true); // Mark auth check as complete even on error
+      setAuthChecked(true);
     }
   };
 
-  // Fetch banks for a specific user
+  // Busca bancas para um usuário específico
   const fetchBanks = async (uid: string) => {
     try {
       setLoading(true);
+      console.log('Buscando bancas para o usuário ID:', uid);
+      
+      // Certifique-se de que uid é uma string válida
+      if (!uid) {
+        console.error('ID de usuário inválido para buscar bancas');
+        setBanks([]);
+        setLoading(false);
+        return;
+      }
       
       const { data, error } = await supabase
         .from('banks')
@@ -89,44 +101,56 @@ const MinhasBancas: React.FC = () => {
         .eq('user_id', uid)
         .order('created_at', { ascending: true });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Erro do Supabase:', error);
+        throw error;
+      }
       
+      console.log('Bancas recuperadas:', data);
       setBanks(data || []);
     } catch (error) {
-      console.error('Error fetching banks:', error);
+      console.error('Erro ao buscar bancas:', error);
+      setBanks([]);
     } finally {
       setLoading(false);
     }
   };
 
-  // Add a new bank
+  // Adiciona uma nova banca
   const addBank = async (bankData: Omit<Bank, 'id' | 'created_at' | 'updated_at' | 'user_id'>) => {
     if (!userId) {
-      console.error('Cannot add bank: No authenticated user');
-      throw new Error('Authentication required');
+      console.error('Não é possível adicionar banca: Nenhum usuário autenticado');
+      throw new Error('Autenticação necessária');
     }
+    
+    console.log('Adicionando banca para o usuário ID:', userId);
     
     const { data, error } = await supabase
       .from('banks')
       .insert([{ ...bankData, user_id: userId }])
       .select();
       
-    if (error) throw error;
+    if (error) {
+      console.error('Erro de inserção do Supabase:', error);
+      throw error;
+    }
     
-    // Update local state
+    // Atualiza o estado local
     if (data) {
-      setBanks([...banks, ...data]);
+      setBanks(prevBanks => [...prevBanks, ...data]);
     }
     
     return data;
   };
 
-  // Update an existing bank
+  // Atualiza uma banca existente
   const updateBank = async (id: string, updates: Partial<Bank>) => {
     if (!userId) {
-      console.error('Cannot update bank: No authenticated user');
-      throw new Error('Authentication required');
+      console.error('Não é possível atualizar banca: Nenhum usuário autenticado');
+      throw new Error('Autenticação necessária');
     }
+    
+    console.log('Atualizando banca ID:', id, 'para usuário:', userId);
     
     const { data, error } = await supabase
       .from('banks')
@@ -135,22 +159,27 @@ const MinhasBancas: React.FC = () => {
       .eq('user_id', userId)
       .select();
       
-    if (error) throw error;
+    if (error) {
+      console.error('Erro de atualização do Supabase:', error);
+      throw error;
+    }
     
-    // Update local state
+    // Atualiza o estado local
     if (data && data[0]) {
-      setBanks(banks.map(bank => bank.id === id ? data[0] : bank));
+      setBanks(prevBanks => prevBanks.map(bank => bank.id === id ? data[0] : bank));
     }
     
     return data;
   };
 
-  // Delete a bank
+  // Exclui uma banca
   const deleteBank = async (id: string) => {
     if (!userId) {
-      console.error('Cannot delete bank: No authenticated user');
-      throw new Error('Authentication required');
+      console.error('Não é possível excluir banca: Nenhum usuário autenticado');
+      throw new Error('Autenticação necessária');
     }
+    
+    console.log('Excluindo banca ID:', id, 'para usuário:', userId);
     
     const { error } = await supabase
       .from('banks')
@@ -158,32 +187,35 @@ const MinhasBancas: React.FC = () => {
       .eq('id', id)
       .eq('user_id', userId);
       
-    if (error) throw error;
+    if (error) {
+      console.error('Erro de exclusão do Supabase:', error);
+      throw error;
+    }
     
-    // Update local state
-    setBanks(banks.filter(bank => bank.id !== id));
+    // Atualiza o estado local
+    setBanks(prevBanks => prevBanks.filter(bank => bank.id !== id));
   };
 
-  // Format number to currency input
+  // Formata número para entrada de moeda
   const formatCurrencyInput = (value: string): string => {
-    // Remove non-digit characters
+    // Remove caracteres não dígitos
     const numericValue = value.replace(/\D/g, "");
     
     if (numericValue === '') return '';
     
-    // Convert to decimal (divide by 100)
+    // Converte para decimal (divide por 100)
     const floatValue = parseFloat(numericValue) / 100;
     
-    // Format as Brazilian currency
+    // Formata como moeda brasileira
     return new Intl.NumberFormat('pt-BR', {
       style: 'currency',
       currency: 'BRL'
     }).format(floatValue);
   };
 
-  // Parse currency string to number
+  // Analisa string de moeda para número
   const parseCurrencyValue = (value: string): number => {
-    // Remove currency symbol, spaces, and replace comma with dot
+    // Remove símbolo de moeda, espaços e substitui vírgula por ponto
     return parseFloat(value.replace(/[^\d,]/g, '').replace(',', '.')) || 0;
   };
 
@@ -196,24 +228,24 @@ const MinhasBancas: React.FC = () => {
     e.preventDefault();
     
     if (!userId) {
-      alert('You must be logged in to perform this action');
+      alert('Você deve estar logado para realizar esta ação');
       return;
     }
     
     setIsSubmitting(true);
     
     try {
-      // Parse the currency string to a number
+      // Analisa a string de moeda para um número
       const capitalValue = parseCurrencyValue(formData.initialCapital);
       
       if (editingBank) {
-        // Update existing bank
+        // Atualiza banca existente
         await updateBank(editingBank.id, {
           name: formData.name,
           initial_capital: capitalValue
         });
       } else {
-        // Create new bank
+        // Cria nova banca
         await addBank({
           name: formData.name,
           initial_capital: capitalValue,
@@ -222,41 +254,41 @@ const MinhasBancas: React.FC = () => {
         });
       }
       
-      // Reset form
+      // Redefine o formulário
       setFormData({ name: '', initialCapital: '' });
       setIsModalOpen(false);
       setEditingBank(null);
     } catch (error) {
-      console.error('Error submitting form:', error);
-      alert('Failed to save bank. Please try again.');
+      console.error('Erro ao enviar formulário:', error);
+      alert('Falha ao salvar banca. Por favor, tente novamente.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleDelete = async (e: React.MouseEvent, bankId: string) => {
-    e.stopPropagation(); // Prevent navigation when clicking the delete button
+    e.stopPropagation(); // Evita a navegação ao clicar no botão de exclusão
     
     if (!userId) {
-      alert('You must be logged in to perform this action');
+      alert('Você deve estar logado para realizar esta ação');
       return;
     }
     
-    if (confirm('Are you sure you want to delete this bank?')) {
+    if (confirm('Tem certeza que deseja excluir esta banca?')) {
       try {
         await deleteBank(bankId);
       } catch (error) {
-        console.error('Error deleting bank:', error);
-        alert('Failed to delete bank. Please try again.');
+        console.error('Erro ao excluir banca:', error);
+        alert('Falha ao excluir banca. Por favor, tente novamente.');
       }
     }
   };
 
   const handleEdit = (e: React.MouseEvent, bank: Bank) => {
-    e.stopPropagation(); // Prevent navigation when clicking the edit button
+    e.stopPropagation(); // Evita a navegação ao clicar no botão de edição
     setEditingBank(bank);
     
-    // Format the number to currency for display in the form
+    // Formata o número para moeda para exibição no formulário
     const formattedCapital = formatCurrencyInput((bank.initial_capital * 100).toString());
     
     setFormData({
@@ -281,7 +313,7 @@ const MinhasBancas: React.FC = () => {
     return bank.initial_capital + bank.gross_profit;
   };
 
-  // Show loading spinner while we're still checking auth status
+  // Mostra spinner de carregamento enquanto ainda verificamos o status de autenticação
   if (loading && !authChecked) {
     return (
       <div className="flex-1 p-8 flex justify-center items-center">
@@ -297,7 +329,7 @@ const MinhasBancas: React.FC = () => {
         <button
           onClick={() => {
             if (!userId) {
-              // If not logged in, redirect to login instead of showing alert
+              // Se não estiver logado, redireciona para login em vez de mostrar alerta
               navigate('/login');
               return;
             }
@@ -350,14 +382,14 @@ const MinhasBancas: React.FC = () => {
                 <button
                   onClick={(e) => handleEdit(e, bank)}
                   className="p-2 hover:bg-gray-100 rounded-full transition-colors duration-200"
-                  title="Edit bank"
+                  title="Editar banca"
                 >
                   <Settings className="w-5 h-5 text-gray-600" />
                 </button>
                 <button
                   onClick={(e) => handleDelete(e, bank.id)}
                   className="p-2 hover:bg-gray-100 rounded-full transition-colors duration-200"
-                  title="Delete bank"
+                  title="Excluir banca"
                 >
                   <Trash2 className="w-5 h-5 text-red-500" />
                 </button>
@@ -397,12 +429,12 @@ const MinhasBancas: React.FC = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
             <h2 className="text-xl font-semibold mb-4">
-              {editingBank ? 'Edit Bank' : 'New Bank'}
+              {editingBank ? 'Editar Banca' : 'Nova Banca'}
             </h2>
             <form onSubmit={handleSubmit}>
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Bank Name
+                  Nome da Banca
                 </label>
                 <input
                   type="text"
@@ -415,7 +447,7 @@ const MinhasBancas: React.FC = () => {
               </div>
               <div className="mb-6">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Initial Capital
+                  Capital Inicial
                 </label>
                 <input
                   type="text"
@@ -438,14 +470,14 @@ const MinhasBancas: React.FC = () => {
                   className="px-4 py-2 text-gray-600 hover:text-gray-800"
                   disabled={isSubmitting}
                 >
-                  Cancel
+                  Cancelar
                 </button>
                 <button
                   type="submit"
                   className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                   disabled={isSubmitting}
                 >
-                  {isSubmitting ? 'Saving...' : 'Save'}
+                  {isSubmitting ? 'Salvando...' : 'Salvar'}
                 </button>
               </div>
             </form>

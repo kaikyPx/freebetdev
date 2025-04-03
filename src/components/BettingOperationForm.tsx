@@ -105,46 +105,25 @@ export const BettingOperationForm: React.FC<BettingOperationFormProps> = ({
     setFormData({ ...formData, [name]: value });
   };
 
-  // Função corrigida para formatar valores monetários
+  // Simplified currency input handler
   const handleCurrencyInput = (e: React.ChangeEvent<HTMLInputElement>, field: string) => {
-    // Armazena a posição do cursor antes da atualização
-    const cursorPosition = e.target.selectionStart;
+    let rawValue = e.target.value.replace(/\D/g, ""); // Remove tudo que não for número
     
-    // Remove caracteres não numéricos (exceto vírgula e ponto)
-    const input = e.target.value;
-    const numericString = input.replace(/[^\d,.]/g, '');
-    
-    // Converte para um formato que possa ser parseado para número
-    const normalizedValue = numericString.replace(/\./g, '').replace(',', '.');
-    
-    // Tenta converter para número
-    const numericValue = parseFloat(normalizedValue);
-    
-    if (!isNaN(numericValue)) {
-      // Formato com dois decimais
-      const formattedValue = numericValue.toLocaleString('pt-BR', {
-        style: 'currency',
-        currency: 'BRL',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      });
-      
-      setFormData(prev => ({ ...prev, [field]: formattedValue }));
-      
-      // Ajustando a posição do cursor após a formatação
-      // Precisamos considerar que a formatação adicionou caracteres
-      if (e.target.selectionStart) {
-        setTimeout(() => {
-          const diff = formattedValue.length - input.length;
-          const newPosition = cursorPosition ? Math.min(cursorPosition + diff, formattedValue.length) : formattedValue.length;
-          e.target.setSelectionRange(newPosition, newPosition);
-        }, 0);
-      }
-    } else if (numericString === '' || numericString === ',' || numericString === '.') {
-      // Se estiver vazio ou apenas com vírgula/ponto, limpa o campo
-      setFormData(prev => ({ ...prev, [field]: '' }));
-    }
+    if (!rawValue) rawValue = "0"; // Evita valor vazio
+  
+    // Converte para número e formata como moeda
+    const formattedValue = (Number(rawValue) / 100).toLocaleString("pt-BR", {
+      style: "currency",
+      currency: "BRL"
+    });
+  
+    // Atualiza o estado armazenando apenas números (para cálculos)
+    setFormData({ ...formData, [field]: rawValue });
+  
+    // Define o valor formatado visualmente no input
+    e.target.value = formattedValue;
   };
+  
 
   const handleAccountChange = (index: number, field: string, value: any) => {
     const updatedAccounts = [...formData.accounts];
@@ -169,25 +148,39 @@ export const BettingOperationForm: React.FC<BettingOperationFormProps> = ({
     setFormData({ ...formData, accounts: updatedAccounts });
   };
 
-  // Função melhorada para extrair o valor numérico
+  // Simple currency formatting for display
+  const formatCurrency = (value: string): string => {
+    if (!value) return '';
+    
+    // Convert to number (replacing comma with dot)
+    const numValue = parseFloat(value.replace(',', '.'));
+    
+    if (isNaN(numValue)) return '';
+    
+    // Format as BRL
+    return numValue.toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+  };
+
+  // Function to get numeric value from currency input
   const parseCurrencyValue = (value: string): number => {
     if (!value) return 0;
-    // Remove símbolo de moeda, espaços, e converte vírgula para ponto
-    const numeric = value.replace(/[^\d,-]/g, '').replace(',', '.');
-    return parseFloat(numeric) || 0;
+    // Replace comma with dot for numeric calculation
+    return parseFloat(value.replace(',', '.')) || 0;
   };
 
   const calculateProfit = () => {
     const betAmount = parseCurrencyValue(formData.bet_amount);
     const result = parseCurrencyValue(formData.result);
-    const profit = result - betAmount;
     
-    const formattedProfit = profit.toLocaleString('pt-BR', {
-      style: 'currency',
-      currency: 'BRL'
-    });
-    
-    setFormData({ ...formData, profit: formattedProfit });
+    if (!isNaN(betAmount) && !isNaN(result)) {
+      const profit = result - betAmount;
+      setFormData({ ...formData, profit: profit.toString().replace('.', ',') });
+    }
   };
 
   const nextStep = () => {
@@ -332,44 +325,15 @@ export const BettingOperationForm: React.FC<BettingOperationFormProps> = ({
     }
   };
 
-  // Função para formatar a entrada de moeda para a conta
+  // Simplified account currency input handler
   const handleAccountCurrencyInput = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
-    // Armazena a posição do cursor antes da atualização
-    const cursorPosition = e.target.selectionStart;
+    let value = e.target.value;
     
-    // Remove caracteres não numéricos (exceto vírgula e ponto)
-    const input = e.target.value;
-    const numericString = input.replace(/[^\d,.]/g, '');
+    // Allow only numbers, commas and periods
+    value = value.replace(/[^\d.,]/g, '');
     
-    // Converte para um formato que possa ser parseado para número
-    const normalizedValue = numericString.replace(/\./g, '').replace(',', '.');
-    
-    // Tenta converter para número
-    const numericValue = parseFloat(normalizedValue);
-    
-    if (!isNaN(numericValue)) {
-      // Formato com dois decimais
-      const formattedValue = numericValue.toLocaleString('pt-BR', {
-        style: 'currency',
-        currency: 'BRL',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      });
-      
-      handleAccountChange(index, 'stake', formattedValue);
-      
-      // Ajustando a posição do cursor após a formatação
-      if (e.target.selectionStart) {
-        setTimeout(() => {
-          const diff = formattedValue.length - input.length;
-          const newPosition = cursorPosition ? Math.min(cursorPosition + diff, formattedValue.length) : formattedValue.length;
-          e.target.setSelectionRange(newPosition, newPosition);
-        }, 0);
-      }
-    } else if (numericString === '' || numericString === ',' || numericString === '.') {
-      // Se estiver vazio ou apenas com vírgula/ponto, limpa o campo
-      handleAccountChange(index, 'stake', '');
-    }
+    // Update account with raw value
+    handleAccountChange(index, 'stake', value);
   };
 
   return (
@@ -538,11 +502,7 @@ export const BettingOperationForm: React.FC<BettingOperationFormProps> = ({
                     <input
                       type="text"
                       value={formData.result}
-                      onChange={(e) => {
-                        handleCurrencyInput(e, 'result');
-                        // Recalcula o lucro quando o resultado muda
-                        setTimeout(calculateProfit, 10);
-                      }}
+                      onChange={(e) => handleCurrencyInput(e, 'result')}
                       placeholder="R$ 0,00"
                       className="pl-10 w-full p-2 border border-gray-300 rounded-md"
                       required
@@ -559,7 +519,7 @@ export const BettingOperationForm: React.FC<BettingOperationFormProps> = ({
                   <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
                   <input
                     type="text"
-                    value={formData.profit}
+                    value={formatCurrency(formData.profit)}
                     readOnly
                     className="pl-10 w-full p-2 border border-gray-300 rounded-md bg-gray-50"
                   />

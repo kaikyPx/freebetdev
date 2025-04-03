@@ -14,8 +14,8 @@ interface SidebarProps {
   onLogout: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  user?: {id: string, email: string} | null;
 }
-
 const Sidebar: React.FC<SidebarProps> = ({ onLogout, isCollapsed, onToggleCollapse }) => {
   const location = useLocation();
   const [calculatorOpen, setCalculatorOpen] = React.useState(false);
