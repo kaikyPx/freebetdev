@@ -1,5 +1,4 @@
 import { createClient } from '@supabase/supabase-js';
-import * as bcrypt from 'bcryptjs';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -9,52 +8,41 @@ if (!supabaseUrl || !supabaseKey) {
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey);
-const SALT_ROUNDS = 10;
 
+// Use the built-in Supabase auth for security and reliability
 export const authService = {
-
   async login(email: string, password: string) {
     try {
-      // Verificar se o email existe
-      const { data, error } = await supabase
-        .from('users')
-        .select('id, email, encrypted_password')
-        .eq('email', email)
-        .single();
+      // Use Supabase's built-in auth with email/password
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
 
       if (error) {
-        console.error('Erro ao buscar usuário:', error);
-        return { success: false, message: error.code === 'PGRST116' ? 'Email não encontrado' : 'Erro ao verificar usuário' };
+        console.error('Erro durante login:', error);
+        return { 
+          success: false, 
+          message: error.message || 'Credenciais inválidas'
+        };
       }
 
-      if (!data) {
+      if (!data || !data.user) {
         return { success: false, message: 'Usuário não encontrado' };
       }
-
-      // Verifica a senha com bcryptjs
-      const passwordMatches = await bcrypt.compare(password, data.encrypted_password);
       
-      if (!passwordMatches) {
-        return { success: false, message: 'Senha incorreta' };
-      }
-      
-      // Atualizar last_sign_in_at
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({ last_sign_in_at: new Date().toISOString() })
-        .eq('id', data.id);
-        
-      if (updateError) {
-        console.warn('Não foi possível atualizar last_sign_in_at:', updateError);
-      }
-      
-      // Gera token e dados do usuário
+      // Use the session token from Supabase for authentication
       const userInfo = {
-        id: data.id,
-        email: data.email,
+        id: data.user.id,
+        email: data.user.email
       };
       
-      const token = btoa(JSON.stringify(userInfo));
+      const token = data.session?.access_token || '';
+      
+      // Store token and user data
+      localStorage.setItem('token', token);
+      localStorage.setItem('user', JSON.stringify(userInfo));
+      localStorage.setItem('isAuthenticated', 'true');
       
       return {
         success: true,
@@ -70,9 +58,22 @@ export const authService = {
     }
   },
 
-  logout: async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+  async logout() {
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      
+      // Clear local storage
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('isAuthenticated');
+      localStorage.removeItem('banks');
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Erro durante logout:', error);
+      return { success: false, message: String(error) };
+    }
   },
 
   async register(email: string, password: string) {
@@ -81,86 +82,83 @@ export const authService = {
         return { success: false, message: 'Email e senha são obrigatórios' };
       }
       
-      // Verificar se o email já existe
-      const { data: existingUser, error: checkError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('email', email)
-        .maybeSingle();
-
-      if (checkError && checkError.code !== 'PGRST116') {
-        console.error('Erro ao verificar email existente:', checkError);
-        return { success: false, message: 'Erro ao verificar email' };
-      }
-
-      if (existingUser) {
-        return { success: false, message: 'Este email já está em uso' };
-      }
-
-      // Hash da senha usando bcryptjs
-      const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
-      
-      // Criar novo usuário
-      const now = new Date().toISOString();
-      const { data, error } = await supabase
-        .from('users')
-        .insert([
-          { 
-            email, 
-            encrypted_password: hashedPassword,
-            created_at: now,
-            updated_at: now,
-            last_sign_in_at: now
-          }
-        ])
-        .select();
+      // Let Supabase handle the entire registration process
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: window.location.origin
+        }
+      });
 
       if (error) {
         console.error('Erro ao registrar usuário:', error);
-        return { success: false, message: 'Erro ao criar usuário: ' + error.message };
+        return { 
+          success: false, 
+          message: error.message || 'Erro ao criar usuário'
+        };
       }
 
-      if (!data || data.length === 0) {
+      if (!data || !data.user) {
         return { success: false, message: 'Erro ao criar usuário: nenhum dado retornado' };
       }
 
-      const newUser = data[0];
+      // If email verification is required, inform the user
+      if (data.session === null) {
+        return { 
+          success: false, 
+          message: 'Verifique seu email para completar o registro', 
+          requiresEmailVerification: true 
+        };
+      }
+
       const userInfo = {
-        id: newUser.id,
-        email: newUser.email,
+        id: data.user.id,
+        email: data.user.email || email,
       };
+      
+      const token = data.session?.access_token || '';
+      
+      // Store token and user data
+      localStorage.setItem('token', token);
+      localStorage.setItem('user', JSON.stringify(userInfo));
+      localStorage.setItem('isAuthenticated', 'true');
       
       return {
         success: true,
         user: userInfo,
-        token: btoa(JSON.stringify(userInfo))
+        token
       };
     } catch (error) {
       console.error('Erro durante registro:', error);
-      return { success: false, message: 'Erro no servidor: ' + (error instanceof Error ? error.message : String(error)) };
+      return { 
+        success: false, 
+        message: 'Erro no servidor: ' + (error instanceof Error ? error.message : String(error))
+      };
     }
   },
 
-  // Verificar se o token é válido
-  verifyToken() {
+  // Verify token using Supabase session
+  async verifyToken() {
     try {
-      const token = localStorage.getItem('token');
+      const { data, error } = await supabase.auth.getSession();
       
-      if (!token) {
+      if (error || !data.session) {
         return { valid: false };
       }
       
-      const decoded = JSON.parse(atob(token));
+      // The session is valid, get the user
+      const { data: userData } = await supabase.auth.getUser();
       
-      if (!decoded || !decoded.id || !decoded.email) {
+      if (!userData || !userData.user) {
         return { valid: false };
       }
       
       return { 
         valid: true, 
         user: {
-          id: decoded.id,
-          email: decoded.email
+          id: userData.user.id,
+          email: userData.user.email || ''
         }
       };
     } catch (error) {
@@ -169,46 +167,37 @@ export const authService = {
     }
   },
 
-  async updateUser(userId: string, updates: { email?: string, password?: string }) {
+  async updateUser(updates: { email?: string, password?: string }) {
     try {
-      const updateData: any = { updated_at: new Date().toISOString() };
+      const updateData: any = {};
       
       if (updates.email) {
-        // Verificar se o novo email já está em uso
-        const { data: existingUser, error: checkError } = await supabase
-          .from('users')
-          .select('id')
-          .eq('email', updates.email)
-          .neq('id', userId)
-          .maybeSingle();
-  
-        if (checkError) {
-          throw new Error('Erro ao verificar email: ' + checkError.message);
-        }
-  
-        if (existingUser) {
-          throw new Error('Este email já está em uso');
-        }
-        
         updateData.email = updates.email;
       }
       
       if (updates.password) {
-        // Hash da nova senha com bcryptjs
-        updateData.encrypted_password = await bcrypt.hash(updates.password, SALT_ROUNDS);
+        updateData.password = updates.password;
       }
       
-      const { data, error } = await supabase
-        .from('users')
-        .update(updateData)
-        .eq('id', userId)
-        .select();
+      const { data, error } = await supabase.auth.updateUser(updateData);
       
       if (error) {
         throw error;
       }
       
-      return { success: true, user: data[0] };
+      if (!data.user) {
+        return { success: false, message: 'Usuário não encontrado' };
+      }
+      
+      const userInfo = {
+        id: data.user.id,
+        email: data.user.email || ''
+      };
+      
+      // Update local storage
+      localStorage.setItem('user', JSON.stringify(userInfo));
+      
+      return { success: true, user: userInfo };
     } catch (error) {
       console.error('Erro ao atualizar usuário:', error);
       return { 
@@ -218,16 +207,20 @@ export const authService = {
     }
   },
   
-  async deleteUser(userId: string) {
+  async deleteUser() {
     try {
-      const { error } = await supabase
-        .from('users')
-        .delete()
-        .eq('id', userId);
+      const { error } = await supabase.auth.admin.deleteUser(
+        (await supabase.auth.getUser()).data.user?.id || ''
+      );
         
       if (error) {
         throw error;
       }
+      
+      // Clear local storage
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('isAuthenticated');
       
       return { success: true };
     } catch (error) {

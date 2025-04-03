@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Settings, Plus, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { authService } from '../services/supabaseService';
 
 interface Bank {
   id: string;
@@ -29,57 +30,105 @@ const MinhasBancas: React.FC = () => {
   const [authChecked, setAuthChecked] = useState(false);
 
   // Verifica o usuário autenticado e define userId
-  useEffect(() => {
-    checkUser();
-    
-    // Inscreve-se para alterações de autenticação
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        const user = session?.user;
-        setUserId(user?.id || null);
-        setAuthChecked(true);
+ // No useEffect inicial do MinhasBancas.tsx
+useEffect(() => {
+  // Prioriza verificação direta do Supabase antes de qualquer outra coisa
+  const checkAuth = async () => {
+    try {
+      setLoading(true);
+      // Verificar diretamente com o Supabase primeiro
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        console.log("Usuário autenticado via Supabase:", session.user.id);
+        setUserId(session.user.id);
+        await fetchBanks(session.user.id);
         
-        if (user) {
-          await fetchBanks(user.id);
+        // Opcionalmente, atualizar o localStorage para manter consistência
+        if (session.access_token) {
+          localStorage.setItem('token', session.access_token);
+          localStorage.setItem('user', JSON.stringify({
+            id: session.user.id,
+            email: session.user.email
+          }));
+          localStorage.setItem('isAuthenticated', 'true');
+        }
+      } else {
+        // Só como backup verificar o localStorage
+        const tokenCheck = authService.verifyToken();
+        if (tokenCheck.valid && tokenCheck.user) {
+          console.log("Usuário autenticado via localStorage:", tokenCheck.user.id);
+          setUserId(tokenCheck.user.id);
+          await fetchBanks(tokenCheck.user.id);
         } else {
+          console.log("Nenhum usuário autenticado");
+          setUserId(null);
           setBanks([]);
-          setLoading(false);
         }
       }
-    );
-
-    return () => {
-      // Limpa a inscrição
-      authListener.subscription.unsubscribe();
-    };
-  }, []);
-
-  // Verifica se o usuário está autenticado
-  const checkUser = async () => {
-    try {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      if (error) throw error;
-
-      const user = session?.user;
-      
-      if (user) {
-        console.log("Usuário autenticado:", user.id);
-        setUserId(user.id);
-        await fetchBanks(user.id);
-      } else {
-        console.log("Nenhum usuário autenticado");
-        setUserId(null);
-        setBanks([]);
-        setLoading(false);
-      }
-      
-      setAuthChecked(true);
     } catch (error) {
-      console.error('Erro ao verificar usuário:', error);
+      console.error('Erro ao verificar autenticação:', error);
+      setUserId(null);
+      setBanks([]);
+    } finally {
       setLoading(false);
       setAuthChecked(true);
     }
   };
+
+  checkAuth();
+  
+  // Monitorar mudanças na autenticação
+  const { data: authListener } = supabase.auth.onAuthStateChange(
+    async (event, session) => {
+      console.log("Auth state changed:", event, session);
+      
+      if (session?.user) {
+        console.log("Usuário atualizado via evento Supabase:", session.user.id);
+        setUserId(session.user.id);
+        await fetchBanks(session.user.id);
+      } else {
+        console.log("Usuário desconectado via evento Supabase");
+        setUserId(null);
+        setBanks([]);
+      }
+    }
+  );
+
+  return () => {
+    authListener.subscription.unsubscribe();
+  };
+}, []);
+
+  // Substitua a função checkUser existente por esta
+const checkUser = async () => {
+  try {
+    // Verificar diretamente com o Supabase primeiro
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    if (session?.user) {
+      console.log("Usuário autenticado via Supabase checkUser:", session.user.id);
+      setUserId(session.user.id);
+      return session.user.id;
+    } else {
+      // Como backup, verificar localStorage
+      const tokenCheck = authService.verifyToken();
+      if (tokenCheck.valid && tokenCheck.user) {
+        console.log("Usuário autenticado via localStorage checkUser:", tokenCheck.user.id);
+        setUserId(tokenCheck.user.id);
+        return tokenCheck.user.id;
+      }
+    }
+    
+    console.log("Nenhum usuário autenticado em checkUser");
+    setUserId(null);
+    return null;
+  } catch (error) {
+    console.error('Erro ao verificar usuário:', error);
+    setUserId(null);
+    return null;
+  }
+};
 
   // Busca bancas para um usuário específico
   const fetchBanks = async (uid: string) => {
@@ -116,18 +165,31 @@ const MinhasBancas: React.FC = () => {
     }
   };
 
+  // Resto do componente permanece igual...
+  // [O restante do seu código permanece inalterado]
+  
   // Adiciona uma nova banca
   const addBank = async (bankData: Omit<Bank, 'id' | 'created_at' | 'updated_at' | 'user_id'>) => {
-    if (!userId) {
-      console.error('Não é possível adicionar banca: Nenhum usuário autenticado');
-      throw new Error('Autenticação necessária');
+    let currentUserId = userId;
+    
+    // Se não tiver userId, tente obter novamente
+    if (!currentUserId) {
+      const { data: { session } } = await supabase.auth.getSession();
+      currentUserId = session?.user?.id || null;
+      
+      if (currentUserId) {
+        setUserId(currentUserId);
+      } else {
+        console.error('Não é possível adicionar banca: Nenhum usuário autenticado');
+        throw new Error('Autenticação necessária');
+      }
     }
     
-    console.log('Adicionando banca para o usuário ID:', userId);
+    console.log('Adicionando banca para o usuário ID:', currentUserId);
     
     const { data, error } = await supabase
       .from('banks')
-      .insert([{ ...bankData, user_id: userId }])
+      .insert([{ ...bankData, user_id: currentUserId }])
       .select();
       
     if (error) {
@@ -489,3 +551,6 @@ const MinhasBancas: React.FC = () => {
 };
 
 export default MinhasBancas;
+
+
+

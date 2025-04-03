@@ -64,11 +64,19 @@ function App() {
     try {
       const response = await authService.login(email, password);
       
-      if (response.success && response.user && response.token) {
+      if (response.success && response.user) {
         setUser(response.user);
         setIsAuthenticated(true);
-        // Armazenar o token para solicitações futuras
-        localStorage.setItem('token', response.token);
+        
+        // Armazenar o usuário no localStorage
+        localStorage.setItem('user', JSON.stringify(response.user));
+        localStorage.setItem('isAuthenticated', 'true');
+        
+        // Se tiver uma sessão do Supabase, podemos usar o access_token dela
+        if (response.session && response.session.access_token) {
+          localStorage.setItem('token', response.session.access_token);
+        }
+        
         return true;
       } else {
         alert(response.message || "Credenciais inválidas!");
