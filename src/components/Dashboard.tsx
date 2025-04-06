@@ -316,9 +316,7 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   };
 
   // Organiza os dados por mês e dia para exibição
- // Organiza os dados por mês e dia para exibição
-// Organiza os dados por mês e dia para exibição
-// Organiza os dados por mês e dia para exibição
+
 const organizeBetsByMonth = () => {
   const months: Record<string, any> = {};
   

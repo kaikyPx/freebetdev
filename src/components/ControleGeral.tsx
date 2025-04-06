@@ -3,9 +3,19 @@ import { supabase } from '../lib/supabase';
 import { formatCurrency, parseCurrency } from '../utils/currency';
 import { RefreshCw, ExternalLink } from 'lucide-react';
 
-interface BettingHouseBalance {
+interface BettingHouse {
+  id: number;
   name: string;
+  link: string;
   totalBalance: number;
+}
+
+interface ManualBalance {
+  id: number;
+  user_id: string;
+  type: string;
+  amount: number;
+  last_updated: string;
 }
 
 interface ManualBalances {
@@ -14,35 +24,34 @@ interface ManualBalances {
   fintechBalance: number;
 }
 
-// Add betting house links mapping
-const BETTING_HOUSE_LINKS: Record<string, string> = {
-  'BateuBet': 'https://apretailer.com.br/click/67ddfba92bfa8178563c6135/186228/352025/subaccount',
-  'BET365': 'https://www.bet365.bet.br/',
-  'Betano': 'https://www.betano.bet.br/',
-  'Betnacional': 'https://betnacional.bet.br/',
-  'Betpix365': 'https://betpix365.bet.br/ptb/bet/main',
-  'BR4': 'https://br4.bet.br/',
-  'EsportivaBet': 'https://go.affiliapass.com?id=67d487cecbafd8001bbc93de',
-  'EstrelaBet': 'https://apretailer.com.br/click/67ddfba92bfa81785c0d8668/182492/352025/subaccount',
-  'KTO': 'https://www.kto.bet.br/login/',
-  'Lotogreen': 'https://apretailer.com.br/click/67d8bc612bfa814c7b7a62b3/186144/352025/subaccount',
-  'MC Games': 'https://go.affiliapass.com?id=67d4884fcbafd8001bbc93f6',
-  'Novibet': 'https://go.affiliapass.com?id=67d986a5872f83001ab56252',
-  'Superbet': 'https://superbet.bet.br/',
-  'Vaidebet': 'https://vaidebet.bet.br/ptb/bet/main'
-};
+interface Metrics {
+  totalAccounts: number;
+  documentsFinalized: number;
+  selfiesPending: number;
+  openHouses: number;
+  pendingVerifications: number;
+  fullVerified: number;
+  emOperacao: number;
+}
+
+interface User {
+  id: string;
+  email: string;
+  role: string;
+}
 
 const ControleGeral = () => {
-  const [balances, setBalances] = useState<BettingHouseBalance[]>([]);
+  const [bettingHouses, setBettingHouses] = useState<BettingHouse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
-  const [manualBalances, setManualBalances] = useState<ManualBalances>(() => {
-    const saved = localStorage.getItem('manualBalances');
-    return saved ? JSON.parse(saved) : { protection: 0, bankBalance: 0, fintechBalance: 0 };
+  const [manualBalances, setManualBalances] = useState<ManualBalances>({
+    protection: 0,
+    bankBalance: 0,
+    fintechBalance: 0
   });
-  const [metrics, setMetrics] = useState({
+  const [metrics, setMetrics] = useState<Metrics>({
     totalAccounts: 0,
     documentsFinalized: 0,
     selfiesPending: 0,
@@ -51,14 +60,52 @@ const ControleGeral = () => {
     fullVerified: 0,
     emOperacao: 0
   });
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    fetchBalances();
-    fetchMetrics();
+    // Get current authenticated user
+    const fetchCurrentUser = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        if (user) {
+          // Get user role from user_profiles table
+          const { data: profiles, error: profileError } = await supabase
+            .from('user_profiles')
+            .select('role')
+            .eq('user_id', user.id)
+            .single();
+          
+          if (profileError) {
+            console.error('Error fetching user profile:', profileError);
+          }
+          
+          setCurrentUser({
+            id: user.id,
+            email: user.email || '',
+            role: profiles?.role || 'user'
+          });
+          
+          setIsAdmin(profiles?.role === 'admin');
+        }
+      } catch (error) {
+        console.error('Error in fetchCurrentUser:', error);
+      }
+    };
 
-    // Subscribe to changes
-    const subscription = supabase
-      .channel('any_changes')
+    fetchCurrentUser();
+    
+    // We'll fetch these after establishing the user context
+    setTimeout(() => {
+      fetchBettingHouses();
+      fetchManualBalances();
+      fetchMetrics();
+    }, 500);
+
+    // Subscribe to changes in account_betting_houses table
+    const accountBettingHousesSubscription = supabase
+      .channel('account_betting_houses_changes')
       .on(
         'postgres_changes',
         {
@@ -66,81 +113,223 @@ const ControleGeral = () => {
           schema: 'public',
           table: 'account_betting_houses'
         },
-        (payload) => {
-          console.log('Real-time update received:', payload);
+        () => {
           setLastUpdate(new Date());
-          fetchBalances();
+          fetchBettingHouses();
           fetchMetrics();
         }
       )
       .subscribe();
 
+    // Subscribe to changes in accounts table
+    const accountsSubscription = supabase
+      .channel('accounts_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'accounts'
+        },
+        () => {
+          fetchMetrics();
+        }
+      )
+      .subscribe();
+
+    // Subscribe to changes in manual_balances table
+    const manualBalancesSubscription = supabase
+      .channel('manual_balances_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'manual_balances'
+        },
+        (payload) => {
+          // Only update if the change affects the current user
+          if (currentUser && payload.new && payload.new.user_id === currentUser.id) {
+            fetchManualBalances();
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
-      subscription.unsubscribe();
+      accountBettingHousesSubscription.unsubscribe();
+      accountsSubscription.unsubscribe();
+      manualBalancesSubscription.unsubscribe();
     };
   }, []);
 
-  // Save manual balances to localStorage whenever they change
+  // Re-fetch data when user changes
   useEffect(() => {
-    localStorage.setItem('manualBalances', JSON.stringify(manualBalances));
-  }, [manualBalances]);
+    if (currentUser) {
+      fetchBettingHouses();
+      fetchManualBalances();
+      fetchMetrics();
+    }
+  }, [currentUser?.id]);
 
-  const handleManualBalanceChange = (type: keyof ManualBalances, value: string) => {
+  const fetchManualBalances = async () => {
+    try {
+      if (!currentUser) return;
+
+      // Fetch shared balances (global balances viewable by all) or user-specific balances
+      const query = isAdmin 
+        ? supabase.from('manual_balances').select('*').is('user_id', null)  // Global balances for admins
+        : supabase.from('manual_balances').select('*').eq('user_id', currentUser.id);  // User-specific balances
+      
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      const balances: ManualBalances = {
+        protection: 0,
+        bankBalance: 0,
+        fintechBalance: 0
+      };
+
+      data?.forEach((item: ManualBalance) => {
+        if (item.type === 'protection') balances.protection = item.amount;
+        if (item.type === 'bankBalance') balances.bankBalance = item.amount;
+        if (item.type === 'fintechBalance') balances.fintechBalance = item.amount;
+      });
+
+      setManualBalances(balances);
+    } catch (error) {
+      console.error('Error fetching manual balances:', error);
+    }
+  };
+
+  const handleManualBalanceChange = async (type: keyof ManualBalances, value: string) => {
+    if (!currentUser) return;
+    
     const numericValue = parseCurrency(value);
+    
+    // Update local state immediately for responsive UI
     setManualBalances(prev => ({
       ...prev,
       [type]: numericValue
     }));
-    setLastUpdate(new Date());
+
+    try {
+      const userId = isAdmin ? null : currentUser.id; // null for global balances (admin only)
+      
+      // Check if balance record exists
+      const { data } = await supabase
+        .from('manual_balances')
+        .select('id')
+        .eq('type', type)
+        .eq('user_id', userId)
+        .single();
+
+      if (data?.id) {
+        // Update existing record
+        await supabase
+          .from('manual_balances')
+          .update({ 
+            amount: numericValue,
+            last_updated: new Date().toISOString()
+          })
+          .eq('id', data.id);
+      } else {
+        // Insert new record
+        await supabase
+          .from('manual_balances')
+          .insert({
+            type,
+            amount: numericValue,
+            user_id: userId,
+            last_updated: new Date().toISOString()
+          });
+      }
+      
+      setLastUpdate(new Date());
+    } catch (error) {
+      console.error(`Failed to update ${type} balance:`, error);
+    }
   };
 
   const fetchMetrics = async () => {
+    if (!currentUser) return;
+    
     try {
+      // For non-admin users, we might want to filter metrics by user
+      const userFilter = !isAdmin ? { user_id: currentUser.id } : {};
+      
       // Total accounts
       const { count: totalAccounts } = await supabase
         .from('accounts')
-        .select('*', { count: 'exact', head: true });
+        .select('*', { count: 'exact', head: true })
+        .match(userFilter);
 
       // Documents finalized (status Verificado)
       const { count: documentsFinalized } = await supabase
         .from('accounts')
         .select('*', { count: 'exact', head: true })
-        .eq('status', 'Verificado');
+        .match({ ...userFilter, status: 'Verificado' });
 
       // Selfies pending
       const { count: selfiesPending } = await supabase
         .from('accounts')
         .select('*', { count: 'exact', head: true })
-        .eq('status', 'Selfie');
+        .match({ ...userFilter, status: 'Selfie' });
 
       // Houses to open (status ABRIR)
       const { count: openHouses } = await supabase
         .from('accounts')
         .select('*', { count: 'exact', head: true })
-        .eq('status', 'ABRIR');
+        .match({ ...userFilter, status: 'ABRIR' });
 
       // Pending verifications
       const { count: pendingVerifications } = await supabase
         .from('accounts')
         .select('*', { count: 'exact', head: true })
-        .eq('verification', 'Verificar');
+        .match({ ...userFilter, verification: 'Verificar' });
 
       // Fully verified accounts (both status and verification are 'Verificado')
       const { count: fullVerified } = await supabase
         .from('accounts')
         .select('*', { count: 'exact', head: true })
-        .eq('status', 'Verificado')
-        .eq('verification', 'Verificado');
+        .match({ ...userFilter, status: 'Verificado', verification: 'Verificado' });
 
-      // Get accounts with 'Em Operação' status in any betting house
-      const { data: accountBettingHouses } = await supabase
-        .from('account_betting_houses')
-        .select('account_id')
-        .eq('status', 'Em Operação');
+      // Fix for the in() operation - first get the account IDs, then use them
+      let emOperacao = 0;
+      
+      if (!isAdmin) {
+        // First, get the user's account IDs
+        const { data: userAccounts } = await supabase
+          .from('accounts')
+          .select('id')
+          .eq('user_id', currentUser.id);
+          
+        if (userAccounts && userAccounts.length > 0) {
+          // Now use these IDs in the query
+          const accountIds = userAccounts.map(account => account.id);
+          
+          const { data: accountBettingHouses } = await supabase
+            .from('account_betting_houses')
+            .select('account_id')
+            .eq('status', 'Em Operação')
+            .in('account_id', accountIds);
+            
+          // Count unique accounts
+          const uniqueAccountsInOperation = new Set(accountBettingHouses?.map(item => item.account_id) || []);
+          emOperacao = uniqueAccountsInOperation.size;
+        }
+      } else {
+        // For admin, get all accounts with 'Em Operação' status
+        const { data: accountBettingHouses } = await supabase
+          .from('account_betting_houses')
+          .select('account_id')
+          .eq('status', 'Em Operação');
 
-      // Count unique accounts that have 'Em Operação' status in any betting house
-      const uniqueAccountsInOperation = new Set(accountBettingHouses?.map(item => item.account_id) || []);
-      const emOperacao = uniqueAccountsInOperation.size;
+        // Count unique accounts
+        const uniqueAccountsInOperation = new Set(accountBettingHouses?.map(item => item.account_id) || []);
+        emOperacao = uniqueAccountsInOperation.size;
+      }
 
       setMetrics({
         totalAccounts: totalAccounts || 0,
@@ -156,43 +345,80 @@ const ControleGeral = () => {
     }
   };
 
-  const fetchBalances = async () => {
+  const fetchBettingHouses = async () => {
+    if (!currentUser) return;
+    
     try {
       setLoading(true);
 
-      // Get all betting houses with their balances in a single query
-      const { data: bettingHousesWithBalances, error: queryError } = await supabase
+      // Get all betting houses with their details
+      const { data: houses, error: housesError } = await supabase
         .from('betting_houses')
         .select(`
           id,
           name,
-          account_betting_houses (
-            saldo
-          )
+          link
         `)
         .order('name');
 
-      if (queryError) throw queryError;
+      if (housesError) throw housesError;
 
-      // Calculate totals for each betting house
-      const totals = (bettingHousesWithBalances || []).map(house => {
-        const total = (house.account_betting_houses || []).reduce((sum, balance) => {
-          return sum + parseCurrency(balance.saldo);
-        }, 0);
+      // For each betting house, get the balances from all accounts
+      const housesWithBalances = await Promise.all(
+        (houses || []).map(async (house) => {
+          let query;
+          
+          if (!isAdmin) {
+            // First, get user's account IDs
+            const { data: userAccounts } = await supabase
+              .from('accounts')
+              .select('id')
+              .eq('user_id', currentUser.id);
+              
+            if (userAccounts && userAccounts.length > 0) {
+              // Now use these IDs in the query
+              const accountIds = userAccounts.map(account => account.id);
+              
+              query = await supabase
+                .from('account_betting_houses')
+                .select('saldo')
+                .eq('betting_house_id', house.id)
+                .in('account_id', accountIds);
+            } else {
+              // User has no accounts
+              return {
+                ...house,
+                totalBalance: 0
+              };
+            }
+          } else {
+            // Admin sees all
+            query = await supabase
+              .from('account_betting_houses')
+              .select('saldo')
+              .eq('betting_house_id', house.id);
+          }
+          
+          const { data: balances } = query;
 
-        return {
-          name: house.name,
-          totalBalance: total
-        };
-      });
+          const totalBalance = (balances || []).reduce((sum, balance) => {
+            return sum + parseCurrency(balance.saldo);
+          }, 0);
 
-      // Sort totals by balance in descending order
-      const sortedTotals = totals.sort((a, b) => b.totalBalance - a.totalBalance);
+          return {
+            ...house,
+            totalBalance
+          };
+        })
+      );
+
+      // Sort by balance in descending order
+      const sortedHouses = housesWithBalances.sort((a, b) => b.totalBalance - a.totalBalance);
 
       console.log('Balances updated:', new Date().toISOString());
-      setBalances(sortedTotals);
+      setBettingHouses(sortedHouses);
     } catch (err) {
-      console.error('Error fetching balances:', err);
+      console.error('Error fetching betting houses:', err);
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
@@ -202,12 +428,13 @@ const ControleGeral = () => {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await fetchBalances();
+    await fetchBettingHouses();
+    await fetchManualBalances();
     await fetchMetrics();
     setLastUpdate(new Date());
   };
 
-  const totalAllHouses = balances.reduce((sum, house) => sum + house.totalBalance, 0) + 
+  const totalAllHouses = bettingHouses.reduce((sum, house) => sum + house.totalBalance, 0) + 
     manualBalances.protection + manualBalances.bankBalance + manualBalances.fintechBalance;
 
   const metricCards = [
@@ -220,7 +447,15 @@ const ControleGeral = () => {
     { title: 'Em Operação', value: metrics.emOperacao, color: 'bg-emerald-50 text-emerald-800' }
   ];
 
-  if (loading && balances.length === 0) {
+  if (!currentUser) {
+    return (
+      <div className="flex-1 p-8 flex items-center justify-center">
+        <div className="text-xl text-gray-600">Faça login para visualizar o Controle Geral</div>
+      </div>
+    );
+  }
+
+  if (loading && bettingHouses.length === 0) {
     return (
       <div className="flex-1 p-8 flex items-center justify-center">
         <div className="text-xl text-gray-600">Carregando...</div>
@@ -300,7 +535,15 @@ const ControleGeral = () => {
   return (
     <div className="flex-1 p-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800 mb-6">Controle Geral</h1>
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold text-gray-800">Controle Geral</h1>
+          {currentUser && (
+            <div className="text-sm text-gray-600">
+              Logado como: <span className="font-medium">{currentUser.email}</span>
+              {isAdmin && <span className="ml-2 bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs">Admin</span>}
+            </div>
+          )}
+        </div>
         
         {/* Metrics Grid */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 mb-6">
@@ -381,16 +624,16 @@ const ControleGeral = () => {
 
       {/* Betting Houses Grid */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-        {balances.map((house) => (
+        {bettingHouses.map((house) => (
           <div
-            key={house.name}
+            key={house.id}
             className="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200 p-4"
           >
             <div className="flex justify-between items-start mb-2">
               <h3 className="text-sm font-semibold text-gray-800">{house.name}</h3>
-              {BETTING_HOUSE_LINKS[house.name] && (
+              {house.link && (
                 <a
-                  href={BETTING_HOUSE_LINKS[house.name]}
+                  href={house.link}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors duration-200"

@@ -3,7 +3,8 @@ import { Check, Trash2, FileDown, Plus, Eye, EyeOff, Search, Upload, MessageCirc
 import { useAccounts } from '../hooks/useAccounts';
 import { useBettingHouses } from '../hooks/useBettingHouses';
 import { formatCurrency } from '../utils/currency';
-
+import { authService } from '../services/supabaseService';
+import { supabase } from '../lib/supabase';
 interface BetCardProps {
   id?: string;
   date: string;
@@ -15,6 +16,7 @@ interface BetCardProps {
   result: number;
   profit: number;
   status?: string;
+  user_id?: string; // Add user_id field
 }
 
 interface DayCardProps {
@@ -25,6 +27,7 @@ interface DayCardProps {
 interface MonthlyCardProps {
   month: string;
   days: DayCardProps[];
+  userId?: string; // Add userId prop to filter data
 }
 
 interface OperationForm {
@@ -122,17 +125,59 @@ function getDaysInMonth(monthStr: string): Date[] {
   return days;
 }
 
+// Create a new hook to get the current user from Supabase
+export const useCurrentUser = () => {
+  const [currentUser, setCurrentUser] = useState<{ id: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  
+  useEffect(() => {
+    const getCurrentUser = async () => {
+      try {
+        // Get the current session from Supabase
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.error("Error fetching user session:", error);
+          setLoading(false);
+          return;
+        }
+        
+        if (session?.user) {
+          setCurrentUser({
+            id: session.user.id
+          });
+        }
+      } catch (err) {
+        console.error("Failed to get current user:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    getCurrentUser();
+  }, [supabase]);
+  
+  return { currentUser, loading };
+};
 
 export const MonthlyBetCard: React.FC<MonthlyCardProps> = ({ month, days }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showDetails, setShowDetails] = useState(true);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
+  const { currentUser, loading: userLoading } = useCurrentUser(); // Get current user
 
   // Get all days in the month as Date objects
   const allDaysInMonth = getDaysInMonth(month);
   
+  // Filter days to only include bets for the current user
+  const filteredDays = days.map(day => ({
+    ...day,
+    bets: day.bets.filter(bet => !bet.user_id || bet.user_id === currentUser?.id)
+  })).filter(day => day.bets.length > 0); // Only show days that have bets for this user
+  
   // Ensure consistent date format for mapping (using DD/MM/YYYY format)
-  const daysMap = new Map(days.map(day => {
+  const daysMap = new Map(filteredDays.map(day => {
     // Make sure the date is in the consistent DD/MM/YYYY format
     const formattedDate = day.date.includes('/')
       ? day.date // already in DD/MM/YYYY
@@ -153,12 +198,12 @@ export const MonthlyBetCard: React.FC<MonthlyCardProps> = ({ month, days }) => {
     };
   });
 
-  // Calculate totals for the month
-  const totalBetAmount = days.reduce((sum, day) => 
+  // Calculate totals for the month (only for filtered bets)
+  const totalBetAmount = filteredDays.reduce((sum, day) => 
     sum + day.bets.reduce((daySum, bet) => daySum + bet.betAmount, 0), 0);
-  const totalResult = days.reduce((sum, day) => 
+  const totalResult = filteredDays.reduce((sum, day) => 
     sum + day.bets.reduce((daySum, bet) => daySum + bet.result, 0), 0);
-  const totalProfit = days.reduce((sum, day) => 
+  const totalProfit = filteredDays.reduce((sum, day) => 
     sum + day.bets.reduce((daySum, bet) => daySum + bet.profit, 0), 0);
   const roi = totalBetAmount > 0 ? (totalProfit / totalBetAmount) * 100 : 0;
 
@@ -184,6 +229,15 @@ export const MonthlyBetCard: React.FC<MonthlyCardProps> = ({ month, days }) => {
       return `${day}/${month}/${year}`;
     }
     return localeDate; // Return as is if format is unexpected
+  }
+
+  if (userLoading) {
+    return <div className="p-4 text-center">Carregando...</div>;
+  }
+
+  // If there are no bets for this user in this month, don't render the component
+  if (filteredDays.length === 0) {
+    return null;
   }
 
   return (
@@ -350,6 +404,89 @@ export const BetCard: React.FC<BetCardProps> = ({
   const [operationForms, setOperationForms] = useState<Record<string, OperationForm>>({});
   const [casaVencedora, setCasaVencedora] = useState('');
   const [cpfVencedor, setCpfVencedor] = useState('');
+  // Novos estados para gerenciar o feedback de atualização
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<{
+    show: boolean;
+    success: boolean;
+    message: string;
+  }>({ show: false, success: false, message: '' });
+
+// In the saveBetData function, modify your catch block like this:
+const saveBetData = async (data: any) => {
+  setIsUpdating(true);
+  try {
+    // Assumindo que você tem uma tabela 'bets' no Supabase
+    const { error } = await supabase
+      .from('betting_operations')
+      .update(data)
+      .eq('id', id);
+    
+    if (error) throw error;
+    
+    setUpdateStatus({
+      show: true,
+      success: true,
+      message: 'Atualizado com sucesso!'
+    });
+    
+    // Esconder a mensagem de sucesso após 3 segundos
+    setTimeout(() => {
+      setUpdateStatus(prev => ({ ...prev, show: false }));
+    }, 3000);
+    
+    return true;
+  } catch (error) {
+    console.error('Erro ao atualizar aposta:', error);
+    setUpdateStatus({
+      show: true,
+      success: false,
+      message: 'Erro ao atualizar: ' + (error?.message || error?.toString() || 'Tente novamente')
+    });
+    return false;
+  } finally {
+    setIsUpdating(false);
+  }
+};
+
+// Similarly in the saveOperationData function:
+const saveOperationData = async (accountId: string, formData: OperationForm) => {
+  setIsUpdating(true);
+  try {
+    // Se já existe um registro, atualiza; caso contrário, insere
+    const { data, error } = await supabase
+      .from('betting_operations')
+      .upsert({
+        bet_id: id,
+        account_id: accountId,
+        ...formData
+      }, { onConflict: 'bet_id,account_id' });
+    
+    if (error) throw error;
+    
+    setUpdateStatus({
+      show: true,
+      success: true,
+      message: 'Operação atualizada!'
+    });
+    
+    setTimeout(() => {
+      setUpdateStatus(prev => ({ ...prev, show: false }));
+    }, 3000);
+    
+    return true;
+  } catch (error) {
+    console.error('Erro ao atualizar operação:', error);
+    setUpdateStatus({
+      show: true,
+      success: false,
+      message: 'Erro ao atualizar operação: ' + (error?.message || error?.toString() || 'Tente novamente')
+    });
+    return false;
+  } finally {
+    setIsUpdating(false);
+  }
+};
 
   const toggleAccount = (accountId: string) => {
     setSelectedAccounts(prev => {
@@ -411,14 +548,56 @@ export const BetCard: React.FC<BetCardProps> = ({
     }
   };
 
-  const updateOperationForm = (accountId: string, field: keyof OperationForm, value: string) => {
-    setOperationForms(prev => ({
-      ...prev,
-      [accountId]: {
+  // Função modificada para atualizar em tempo real
+  const updateOperationForm = async (accountId: string, field: keyof OperationForm, value: string) => {
+    // Atualiza o estado local primeiro para feedback imediato
+    setOperationForms(prev => {
+      const updatedForm = {
         ...prev[accountId],
         [field]: value
+      };
+      
+      // Se for status, atualiza em todos os formulários
+      if (field === 'status') {
+        const newForms = { ...prev };
+        Object.keys(newForms).forEach(id => {
+          newForms[id] = {
+            ...newForms[id],
+            status: value
+          };
+        });
+        return newForms;
       }
-    }));
+      
+      return {
+        ...prev,
+        [accountId]: updatedForm
+      };
+    });
+    
+    // Se o campo for status, atualize o status principal da aposta também
+    if (field === 'status') {
+      await saveBetData({ status: value });
+    }
+    
+    // Salva no banco de dados após um curto delay para evitar muitas requisições
+    // se o usuário estiver fazendo múltiplas mudanças rapidamente
+    if (accountId) {
+      // Use debounce para evitar muitas requisições
+      clearTimeout(window.updateTimeout);
+      window.updateTimeout = setTimeout(() => {
+        saveOperationData(accountId, operationForms[accountId]);
+      }, 500);
+    }
+  };
+
+  // Modificada para atualizar em tempo real
+  const handlePromotionChange = async (promotion: string) => {
+    setSelectedPromotion(promotion);
+    setIsPromotionOpen(false);
+    
+    // Salva no banco
+    await saveBetData({ promotion_id });
   };
 
   const truncateName = (name: string) => {
@@ -476,6 +655,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               className="w-full p-2 border rounded-md bg-white"
               value={form.casa1}
               onChange={(e) => updateOperationForm(accountId, 'casa1', e.target.value)}
+              disabled={isUpdating}
             >
               <option value="">Selecione</option>
               {bettingHouses.map(house => (
@@ -489,6 +669,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               className="w-full p-2 border rounded-md bg-white"
               value={form.cpf1}
               onChange={(e) => updateOperationForm(accountId, 'cpf1', e.target.value)}
+              disabled={isUpdating}
             >
               <option value="">Selecione</option>
               {accounts.map(account => (
@@ -506,6 +687,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               placeholder="R$ 0,00"
               value={form.stake1}
               onChange={(e) => updateOperationForm(accountId, 'stake1', e.target.value)}
+              disabled={isUpdating}
             />
           </div>
 
@@ -514,6 +696,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               className="w-full p-2 border rounded-md bg-white"
               value={form.casa2}
               onChange={(e) => updateOperationForm(accountId, 'casa2', e.target.value)}
+              disabled={isUpdating}
             >
               <option value="">Selecione</option>
               {bettingHouses.map(house => (
@@ -527,6 +710,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               className="w-full p-2 border rounded-md bg-white"
               value={form.cpf2}
               onChange={(e) => updateOperationForm(accountId, 'cpf2', e.target.value)}
+              disabled={isUpdating}
             >
               <option value="">Selecione</option>
               {accounts.map(account => (
@@ -544,6 +728,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               placeholder="R$ 0,00"
               value={form.stake2}
               onChange={(e) => updateOperationForm(accountId, 'stake2', e.target.value)}
+              disabled={isUpdating}
             />
           </div>
 
@@ -552,6 +737,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               className="w-full p-2 border rounded-md bg-white"
               value={form.casaProt}
               onChange={(e) => updateOperationForm(accountId, 'casaProt', e.target.value)}
+              disabled={isUpdating}
             >
               <option value="">Selecione</option>
               {bettingHouses.map(house => (
@@ -565,6 +751,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               className="w-full p-2 border rounded-md bg-white"
               value={form.cpfProt}
               onChange={(e) => updateOperationForm(accountId, 'cpfProt', e.target.value)}
+              disabled={isUpdating}
             >
               <option value="">Selecione</option>
               {accounts.map(account => (
@@ -582,6 +769,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               placeholder="R$ 0,00"
               value={form.stakeProt}
               onChange={(e) => updateOperationForm(accountId, 'stakeProt', e.target.value)}
+              disabled={isUpdating}
             />
           </div>
 
@@ -592,6 +780,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               }`}
               value={form.casaVencedora || ''}
               onChange={(e) => updateOperationForm(accountId, 'casaVencedora', e.target.value)}
+              disabled={isUpdating}
             >
               <option value="">Selecione</option>
               {bettingHouses.map(house => (
@@ -607,6 +796,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               }`}
               value={form.cpfVencedor || ''}
               onChange={(e) => updateOperationForm(accountId, 'cpfVencedor', e.target.value)}
+              disabled={isUpdating}
             >
               <option value="">Selecione</option>
               {accounts.map(account => (
@@ -622,7 +812,23 @@ export const BetCard: React.FC<BetCardProps> = ({
   };
 
   return (
-    <div className="bg-white p-4 rounded-lg shadow-sm mb-2">
+    <div className="bg-white p-4 rounded-lg shadow-sm mb-2 relative">
+      {/* Indicador de atualização */}
+      {isUpdating && (
+        <div className="absolute inset-0 bg-black bg-opacity-10 flex items-center justify-center rounded-lg z-30">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
+        </div>
+      )}
+      
+      {/* Mensagem de status */}
+      {updateStatus.show && (
+        <div className={`absolute top-2 right-2 px-4 py-2 rounded-md text-white text-sm z-40 ${
+          updateStatus.success ? 'bg-green-500' : 'bg-red-500'
+        }`}>
+          {updateStatus.message}
+        </div>
+      )}
+      
       <div className="flex items-center gap-4">
         <button
           onClick={() => setIsExpanded(!isExpanded)}
@@ -647,13 +853,17 @@ export const BetCard: React.FC<BetCardProps> = ({
               value={operationForms[Object.keys(operationForms)[0]]?.status || status || 'Em Operação'}
               onChange={(e) => {
                 const newStatus = e.target.value;
+                // Atualiza o status localmente imediatamente
                 Object.keys(operationForms).forEach(accountId => {
                   updateOperationForm(accountId, 'status', newStatus);
                 });
+                // Também atualiza o status principal da aposta
+                saveBetData({ status: newStatus });
               }}
               className={`px-3 py-1 rounded-lg text-sm ${
                 statusOptions.find(opt => opt.value === (operationForms[Object.keys(operationForms)[0]]?.status || status))?.color || 'bg-blue-100 text-blue-800'
               }`}
+              disabled={isUpdating}
             >
               {statusOptions.map(option => (
                 <option 
@@ -669,6 +879,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               <button
                 onClick={() => setIsPromotionOpen(!isPromotionOpen)}
                 className="px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                disabled={isUpdating}
               >
                 {selectedPromotion || 'Selecione a Promoção'}
                 <ChevronDown className="w-4 h-4" />
@@ -679,10 +890,7 @@ export const BetCard: React.FC<BetCardProps> = ({
                     {promotionOptions.map((promotion) => (
                       <button
                         key={promotion}
-                        onClick={() => {
-                          setSelectedPromotion(promotion);
-                          setIsPromotionOpen(false);
-                        }}
+                        onClick={() => handlePromotionChange(promotion)}
                         className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
                       >
                         {promotion}
@@ -696,6 +904,7 @@ export const BetCard: React.FC<BetCardProps> = ({
               <button
                 onClick={() => setIsDropdownOpen(!isDropdownOpen)}
                 className="px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                disabled={isUpdating}
               >
                 <span>CPFs ({selectedAccounts.length})</span>
                 <ChevronDown className="w-4 h-4" />
@@ -709,6 +918,7 @@ export const BetCard: React.FC<BetCardProps> = ({
                         checked={selectedAccounts.length === accounts.length}
                         onChange={toggleAllAccounts}
                         className="rounded border-gray-300"
+                        disabled={isUpdating}
                       />
                       <span className="font-medium">Selecionar Todos</span>
                     </label>
@@ -721,6 +931,7 @@ export const BetCard: React.FC<BetCardProps> = ({
                           checked={selectedAccounts.includes(account.id)}
                           onChange={() => toggleAccount(account.id)}
                           className="rounded border-gray-300"
+                          disabled={isUpdating}
                         />
                         <span title={account.name}>{truncateName(account.name)}</span>
                       </label>
@@ -773,6 +984,11 @@ export const BetCard: React.FC<BetCardProps> = ({
         <div className="mt-4 pl-9 space-y-4">
           <div className="bg-white rounded-lg border border-gray-200 p-4">
             {selectedAccounts.map((accountId, index) => renderOperationForm(accountId, index))}
+            {selectedAccounts.length === 0 && (
+              <div className="text-center py-6 text-gray-500">
+                Selecione CPFs para gerenciar operações
+              </div>
+            )}
           </div>
         </div>
       )}

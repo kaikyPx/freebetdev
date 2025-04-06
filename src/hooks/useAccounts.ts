@@ -34,21 +34,40 @@ export function useAccounts() {
 
   async function fetchAccounts() {
     try {
-      setLoading(true);
+      // Buscar o usuário atual
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        throw new Error('User not authenticated');
+      }
+      
+      // Filtrar contas pelo user_id (se a tabela de contas tiver user_id)
       const { data, error } = await supabase
         .from('accounts')
         .select('*')
-        .order('item', { ascending: true });
-
-      if (error) throw error;
-
-      console.log('Fetched accounts:', data?.length || 0, 'records');
-      setAccounts(data || []);
+        .eq('user_id', user.id)
+        .order('name');
+  
+      if (error) {
+        // Se o erro for sobre coluna inexistente, tente buscar sem filtro
+        if (error.code === '42703' && error.message.includes('user_id does not exist')) {
+          // Buscar todas as contas se user_id não existir na tabela
+          const { data: allData, error: allError } = await supabase
+            .from('accounts')
+            .select('*')
+            .order('name');
+          
+          if (allError) throw allError;
+          return allData || [];
+        } else {
+          throw error;
+        }
+      }
+      
+      return data || [];
     } catch (err) {
       console.error('Error fetching accounts:', err);
-      setError(err instanceof Error ? err.message : 'An error occurred');
-    } finally {
-      setLoading(false);
+      throw err;
     }
   }
 
