@@ -46,12 +46,46 @@ interface OperationForm {
   cpfVencedor?: string;
 }
 
-const promotionOptions = [
-  'Freebet',
-  'Cashback',
-  'Aumento',
-  'SuperOdds'
-];
+// Adicione essa interface para as promoções
+interface Promotion {
+  id: string;
+  name: string;
+}
+
+// Crie um hook para buscar as promoções
+export const usePromotions = () => {
+  const [promotions, setPromotions] = useState<Promotion[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchPromotions = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        const { data, error } = await supabase
+          .from('promotions')
+          .select('id, name');
+        
+        if (error) throw error;
+        
+        console.log('Promoções carregadas do banco:', data);
+        setPromotions(data || []);
+      } catch (err) {
+        console.error("Erro ao buscar promoções:", err);
+        setError(err.message || "Falha ao carregar promoções");
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchPromotions();
+  }, []);
+  
+  return { promotions, loading, error };
+};
+
 
 const statusOptions = [
   { value: 'Em Operação', color: 'bg-blue-100 text-blue-800' },
@@ -392,115 +426,238 @@ export const BetCard: React.FC<BetCardProps> = ({
   betAmount,
   result,
   profit,
-  status
+  status,
+  promotion_id
 }) => {
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isPromotionOpen, setIsPromotionOpen] = useState(false);
-  const [selectedPromotion, setSelectedPromotion] = useState<string>('');
-  const { accounts } = useAccounts();
-  const { bettingHouses } = useBettingHouses();
+  const { accounts, loading: accountsLoading } = useAccounts();
+  const { bettingHouses, loading: housesLoading } = useBettingHouses();
+
+  const { promotions, loading: loadingPromotions } = usePromotions();
   const [isExpanded, setIsExpanded] = useState(false);
   const [operationForms, setOperationForms] = useState<Record<string, OperationForm>>({});
   const [casaVencedora, setCasaVencedora] = useState('');
   const [cpfVencedor, setCpfVencedor] = useState('');
-  // Novos estados para gerenciar o feedback de atualização
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [selectedPromotionId, setSelectedPromotionId] = useState<string | null>(promotion_id || null);
+  const [selectedPromotion, setSelectedPromotion] = useState<string>('');
   const [updateStatus, setUpdateStatus] = useState<{
     show: boolean;
     success: boolean;
     message: string;
   }>({ show: false, success: false, message: '' });
 
-// In the saveBetData function, modify your catch block like this:
-const saveBetData = async (data: any) => {
-  setIsUpdating(true);
-  try {
-    // Assumindo que você tem uma tabela 'bets' no Supabase
-    const { error } = await supabase
-      .from('betting_operations')
-      .update(data)
-      .eq('id', id);
-    
-    if (error) throw error;
-    
-    setUpdateStatus({
-      show: true,
-      success: true,
-      message: 'Atualizado com sucesso!'
-    });
-    
-    // Esconder a mensagem de sucesso após 3 segundos
-    setTimeout(() => {
-      setUpdateStatus(prev => ({ ...prev, show: false }));
-    }, 3000);
-    
-    return true;
-  } catch (error) {
-    console.error('Erro ao atualizar aposta:', error);
-    setUpdateStatus({
-      show: true,
-      success: false,
-      message: 'Erro ao atualizar: ' + (error?.message || error?.toString() || 'Tente novamente')
-    });
-    return false;
-  } finally {
-    setIsUpdating(false);
-  }
-};
+  useEffect(() => {
+    if (id) {
+      loadOperationDetails();
+    }
+  }, [id]); // This will run when the component mounts if an id exists
+  
 
-// Similarly in the saveOperationData function:
-const saveOperationData = async (accountId: string, formData: OperationForm) => {
-  setIsUpdating(true);
-  try {
-    // Se já existe um registro, atualiza; caso contrário, insere
-    const { data, error } = await supabase
-      .from('betting_operations')
-      .upsert({
-        bet_id: id,
+  // Add this new function to load existing operation details
+  const loadOperationDetails = async () => {
+    if (!id) return;
+    
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('betting_operation_details')
+        .select('*')
+        .eq('betting_operation_id', id);
+      
+      if (error) throw error;
+      
+      console.log('Loaded operation details:', data);
+      
+      if (data && data.length > 0) {
+        const formData: Record<string, OperationForm> = {};
+        const accountIds: string[] = [];
+        
+        data.forEach(operation => {
+          const accountId = operation.account_id;
+          if (accountId) { // Make sure accountId exists
+            accountIds.push(accountId);
+            
+            formData[accountId] = {
+              id: accountId,
+              status: status || 'Em Operação',
+              casa1: operation.casa1 || '',
+              cpf1: operation.cpf1 || accountId,
+              stake1: operation.stake1 || '',
+              casa2: operation.casa2 || '',
+              cpf2: operation.cpf2 || '',
+              stake2: operation.stake2 || '',
+              casaProt: operation.casaprot || '',
+              cpfProt: operation.cpfprot || '',
+              stakeProt: operation.stakeprot || '',
+              casaVencedora: operation.casavencedora || '',
+              cpfVencedor: operation.cpfvencedor || ''
+            };
+          }
+        });
+        
+        // Only update if we found accounts
+        if (accountIds.length > 0) {
+          setOperationForms(formData);
+          setSelectedAccounts(accountIds);
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao carregar detalhes da operação:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  // Load operations when component expands
+  useEffect(() => {
+    if (isExpanded && selectedAccounts.length === 0) {
+      loadOperationDetails();
+    }
+  }, [isExpanded]);
+
+  useEffect(() => {
+    console.log('useEffect triggered with:', {
+      promotion_id,
+      loadingPromotions,
+      promotionsCount: promotions.length
+    });
+    
+    if (!promotion_id || loadingPromotions) {
+      console.log('Skipping effect: still loading or no promotion_id');
+      return;
+    }
+    
+    console.log('Available promotions:', promotions);
+    
+    if (promotions.length > 0) {
+      const foundPromotion = promotions.find(p => String(p.id) === String(promotion_id));
+      
+      if (foundPromotion) {
+        console.log('Promoção encontrada:', foundPromotion);
+        setSelectedPromotion(foundPromotion.name);
+        setSelectedPromotionId(promotion_id);
+      } else {
+        console.log('Promoção com ID', promotion_id, 'não encontrada nas promoções carregadas');
+        setSelectedPromotion(`Promoção #${promotion_id}`);
+        setSelectedPromotionId(promotion_id);
+      }
+    }
+  }, [promotion_id, promotions, loadingPromotions]);
+
+  useEffect(() => {
+    console.log("Promoções carregadas:", promotions);
+  }, [promotions]);
+
+  const saveBetData = async (data: any) => {
+    setIsUpdating(true);
+    try {
+      const { error } = await supabase
+        .from('betting_operations')
+        .update(data)
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      setUpdateStatus({
+        show: true,
+        success: true,
+        message: 'Atualizado com sucesso!'
+      });
+      
+      setTimeout(() => {
+        setUpdateStatus(prev => ({ ...prev, show: false }));
+      }, 3000);
+      
+      return true;
+    } catch (error) {
+      console.error('Erro ao atualizar aposta:', error);
+      setUpdateStatus({
+        show: true,
+        success: false,
+        message: 'Erro ao atualizar: ' + (error?.message || error?.toString() || 'Tente novamente')
+      });
+      return false;
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const saveOperationData = async (accountId: string, formData: OperationForm) => {
+    setIsUpdating(true);
+    try {
+      // Convert camelCase to lowercase to match DB schema
+      const dbFormData = {
+        betting_operation_id: id,
         account_id: accountId,
-        ...formData
-      }, { onConflict: 'bet_id,account_id' });
-    
-    if (error) throw error;
-    
-    setUpdateStatus({
-      show: true,
-      success: true,
-      message: 'Operação atualizada!'
-    });
-    
-    setTimeout(() => {
-      setUpdateStatus(prev => ({ ...prev, show: false }));
-    }, 3000);
-    
-    return true;
-  } catch (error) {
-    console.error('Erro ao atualizar operação:', error);
-    setUpdateStatus({
-      show: true,
-      success: false,
-      message: 'Erro ao atualizar operação: ' + (error?.message || error?.toString() || 'Tente novamente')
-    });
-    return false;
-  } finally {
-    setIsUpdating(false);
-  }
-};
+        casa1: formData.casa1,
+        cpf1: formData.cpf1,
+        stake1: formData.stake1,
+        casa2: formData.casa2,
+        cpf2: formData.cpf2,
+        stake2: formData.stake2,
+        // Fix these property names to match DB schema
+        casaprot: formData.casaProt,
+        cpfprot: formData.cpfProt,
+        stakeprot: formData.stakeProt,
+        casavencedora: formData.casaVencedora,
+        cpfvencedor: formData.cpfVencedor,
+        updated_at: new Date().toISOString()
+      };
+      
+      const { data, error } = await supabase
+        .from('betting_operation_details')
+        .upsert(dbFormData, { onConflict: 'betting_operation_id,account_id' });
+      
+      if (error) throw error;
+      
+      setUpdateStatus({
+        show: true,
+        success: true,
+        message: 'Operação atualizada!'
+      });
+      
+      setTimeout(() => {
+        setUpdateStatus(prev => ({ ...prev, show: false }));
+      }, 3000);
+      
+      return true;
+    } catch (error) {
+      console.error('Erro ao atualizar operação:', error);
+      setUpdateStatus({
+        show: true,
+        success: false,
+        message: 'Erro ao atualizar operação: ' + (error?.message || error?.toString() || 'Tente novamente')
+      });
+      return false;
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   const toggleAccount = (accountId: string) => {
+    if (!accountId) return; // Protect against undefined accounts
+    
     setSelectedAccounts(prev => {
       if (prev.includes(accountId)) {
+        // Remove from selection
+        const newSelected = prev.filter(id => id !== accountId);
+        
+        // Also update forms if needed
         const newForms = { ...operationForms };
         delete newForms[accountId];
         setOperationForms(newForms);
-        return prev.filter(id => id !== accountId);
+        
+        return newSelected;
       } else {
+        // Add to selection and create form for this account
         setOperationForms(prev => ({
           ...prev,
           [accountId]: {
             id: accountId,
-            status: 'Em Operação',
+            status: status || 'Em Operação',
             casa1: '',
             cpf1: accountId,
             stake1: '',
@@ -548,16 +705,13 @@ const saveOperationData = async (accountId: string, formData: OperationForm) => 
     }
   };
 
-  // Função modificada para atualizar em tempo real
   const updateOperationForm = async (accountId: string, field: keyof OperationForm, value: string) => {
-    // Atualiza o estado local primeiro para feedback imediato
     setOperationForms(prev => {
       const updatedForm = {
         ...prev[accountId],
         [field]: value
       };
       
-      // Se for status, atualiza em todos os formulários
       if (field === 'status') {
         const newForms = { ...prev };
         Object.keys(newForms).forEach(id => {
@@ -575,15 +729,11 @@ const saveOperationData = async (accountId: string, formData: OperationForm) => 
       };
     });
     
-    // Se o campo for status, atualize o status principal da aposta também
     if (field === 'status') {
       await saveBetData({ status: value });
     }
     
-    // Salva no banco de dados após um curto delay para evitar muitas requisições
-    // se o usuário estiver fazendo múltiplas mudanças rapidamente
     if (accountId) {
-      // Use debounce para evitar muitas requisições
       clearTimeout(window.updateTimeout);
       window.updateTimeout = setTimeout(() => {
         saveOperationData(accountId, operationForms[accountId]);
@@ -591,13 +741,22 @@ const saveOperationData = async (accountId: string, formData: OperationForm) => 
     }
   };
 
-  // Modificada para atualizar em tempo real
-  const handlePromotionChange = async (promotion: string) => {
-    setSelectedPromotion(promotion);
-    setIsPromotionOpen(false);
-    
-    // Salva no banco
-    await saveBetData({ promotion_id });
+  const handlePromotionChange = async (promotion: Promotion) => {
+    try {
+      console.log('Selecionando promoção:', promotion.name, promotion.id);
+      
+      setSelectedPromotion(promotion.name);
+      setSelectedPromotionId(promotion.id);
+      setIsPromotionOpen(false);
+      
+      const resultado = await saveBetData({ promotion_id: promotion.id });
+      
+      if (resultado) {
+        console.log('Promoção salva com sucesso no banco de dados');
+      }
+    } catch (erro) {
+      console.error('Erro ao selecionar promoção:', erro);
+    }
   };
 
   const truncateName = (name: string) => {
@@ -605,7 +764,54 @@ const saveOperationData = async (accountId: string, formData: OperationForm) => 
   };
 
   const roi = (profit / betAmount) * 100;
-
+  
+  const renderPromotionDropdown = () => {
+    console.log('Rendering dropdown with:', {
+      selectedPromotion,
+      selectedPromotionId,
+      loadingPromotions,
+      promotionsAvailable: promotions.length
+    });
+    
+    return (
+      <div className="relative">
+        <button
+          onClick={() => setIsPromotionOpen(!isPromotionOpen)}
+          className={`px-3 py-1 text-sm border rounded-lg ${selectedPromotionId ? 'bg-green-50 text-green-700' : 'text-gray-700'} hover:bg-gray-50 flex items-center gap-2`}
+          disabled={isUpdating || loadingPromotions}
+        >
+          {loadingPromotions 
+            ? 'Carregando...' 
+            : (selectedPromotion || 'Selecione a Promoção')}
+          <ChevronDown className="w-4 h-4" />
+        </button>
+        {isPromotionOpen && !loadingPromotions && (
+          <div className="absolute z-20 mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-200">
+            <div className="py-1">
+              {promotions.length > 0 ? (
+                promotions.map((promotion) => (
+                  <button
+                    key={promotion.id}
+                    onClick={() => handlePromotionChange(promotion)}
+                    className={`w-full px-4 py-2 text-left text-sm ${
+                      selectedPromotionId === promotion.id ? 'bg-green-50 text-green-800 font-medium' : 'text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    {promotion.name}
+                  </button>
+                ))
+              ) : (
+                <div className="px-4 py-2 text-sm text-gray-500">
+                  Nenhuma promoção disponível
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+  
   const renderOperationForm = (accountId: string, index: number) => {
     const form = operationForms[accountId];
 
@@ -813,14 +1019,12 @@ const saveOperationData = async (accountId: string, formData: OperationForm) => 
 
   return (
     <div className="bg-white p-4 rounded-lg shadow-sm mb-2 relative">
-      {/* Indicador de atualização */}
       {isUpdating && (
         <div className="absolute inset-0 bg-black bg-opacity-10 flex items-center justify-center rounded-lg z-30">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
         </div>
       )}
       
-      {/* Mensagem de status */}
       {updateStatus.show && (
         <div className={`absolute top-2 right-2 px-4 py-2 rounded-md text-white text-sm z-40 ${
           updateStatus.success ? 'bg-green-500' : 'bg-red-500'
@@ -853,11 +1057,9 @@ const saveOperationData = async (accountId: string, formData: OperationForm) => 
               value={operationForms[Object.keys(operationForms)[0]]?.status || status || 'Em Operação'}
               onChange={(e) => {
                 const newStatus = e.target.value;
-                // Atualiza o status localmente imediatamente
                 Object.keys(operationForms).forEach(accountId => {
                   updateOperationForm(accountId, 'status', newStatus);
                 });
-                // Também atualiza o status principal da aposta
                 saveBetData({ status: newStatus });
               }}
               className={`px-3 py-1 rounded-lg text-sm ${
@@ -875,70 +1077,54 @@ const saveOperationData = async (accountId: string, formData: OperationForm) => 
                 </option>
               ))}
             </select>
+            {renderPromotionDropdown()}
             <div className="relative">
-              <button
-                onClick={() => setIsPromotionOpen(!isPromotionOpen)}
-                className="px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                disabled={isUpdating}
-              >
-                {selectedPromotion || 'Selecione a Promoção'}
-                <ChevronDown className="w-4 h-4" />
-              </button>
-              {isPromotionOpen && (
-                <div className="absolute z-20 mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-200">
-                  <div className="py-1">
-                    {promotionOptions.map((promotion) => (
-                      <button
-                        key={promotion}
-                        onClick={() => handlePromotionChange(promotion)}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                      >
-                        {promotion}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="relative">
-              <button
-                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                className="px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                disabled={isUpdating}
-              >
-                <span>CPFs ({selectedAccounts.length})</span>
-                <ChevronDown className="w-4 h-4" />
-              </button>
-              {isDropdownOpen && (
-                <div className="absolute z-20 mt-1 w-64 bg-white rounded-lg shadow-lg border border-gray-200">
-                  <div className="p-2 border-b">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={selectedAccounts.length === accounts.length}
-                        onChange={toggleAllAccounts}
-                        className="rounded border-gray-300"
-                        disabled={isUpdating}
-                      />
-                      <span className="font-medium">Selecionar Todos</span>
-                    </label>
-                  </div>
-                  <div className="p-2 max-h-48 overflow-y-auto">
-                    {accounts.map(account => (
-                      <label key={account.id} className="flex items-center gap-2 py-1">
-                        <input
-                          type="checkbox"
-                          checked={selectedAccounts.includes(account.id)}
-                          onChange={() => toggleAccount(account.id)}
-                          className="rounded border-gray-300"
-                          disabled={isUpdating}
-                        />
-                        <span title={account.name}>{truncateName(account.name)}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
+            <button
+  onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+  className="px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+  disabled={isUpdating || isLoading}
+>
+  <span>
+    {isLoading ? 'Carregando...' : `CPFs (${selectedAccounts.length})`}
+  </span>
+  <ChevronDown className="w-4 h-4" />
+</button>
+{isDropdownOpen && (
+  <div className="absolute z-20 mt-1 w-64 bg-white rounded-lg shadow-lg border border-gray-200">
+    <div className="p-2 border-b">
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={accounts.length > 0 && selectedAccounts.length === accounts.length}
+          onChange={toggleAllAccounts}
+          className="rounded border-gray-300"
+          disabled={isUpdating || accountsLoading}
+        />
+        <span className="font-medium">Selecionar Todos</span>
+      </label>
+    </div>
+    <div className="p-2 max-h-48 overflow-y-auto">
+      {accountsLoading ? (
+        <div className="text-center text-gray-500 py-2">Carregando contas...</div>
+      ) : accounts.length === 0 ? (
+        <div className="text-center text-gray-500 py-2">Nenhuma conta encontrada</div>
+      ) : (
+        accounts.map(account => (
+          <label key={account.id} className="flex items-center gap-2 py-1">
+            <input
+              type="checkbox"
+              checked={selectedAccounts.includes(account.id)}
+              onChange={() => toggleAccount(account.id)}
+              className="rounded border-gray-300"
+              disabled={isUpdating}
+            />
+            <span title={account.name}>{truncateName(account.name)}</span>
+          </label>
+        ))
+      )}
+    </div>
+  </div>
+)}
             </div>
           </div>
         </div>

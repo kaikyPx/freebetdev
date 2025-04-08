@@ -7,6 +7,8 @@ import { useColumnVisibility } from '../hooks/useColumnVisibility';
 import { ColumnSelector } from './ColumnSelector';
 import { formatCurrency, parseCurrency, sumCurrencyValues } from '../utils/currency';
 import type { Account } from '../types/database';
+import { authService } from '../services/supabaseService';
+import { supabase } from '../lib/supabase';
 
 const tableColumns = [
   { id: 'item', label: 'Item', defaultVisible: true },
@@ -58,6 +60,7 @@ const responsavelOptions = [
   'Rafael Jesus'
 ];
 
+
 function CPFAccounts() {
   const {
     accounts,
@@ -93,8 +96,12 @@ function CPFAccounts() {
   const [newAccount, setNewAccount] = useState<Partial<Account>>({});
   const [importing, setImporting] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
+  const [loadingStatuses, setLoadingStatuses] = useState(false);
   const [showTemplateMenu, setShowTemplateMenu] = useState<string | null>(null);
   const [selectedHouse, setSelectedHouse] = useState<string>('');
+  const [userId, setUserId] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+const [authChecked, setAuthChecked] = useState(false);
   const [accountStatuses, setAccountStatuses] = useState<Record<string, { 
     status: string | null;
     verification: string | null;
@@ -105,14 +112,93 @@ function CPFAccounts() {
     obs: string | null;
   }>>({});
   const [showExcelMenu, setShowExcelMenu] = useState(false);
+  useEffect(() => {
+    if (selectedHouse && accounts.length > 0 && !loadingStatuses) {
+      const loadStatuses = async () => {
+        setLoadingStatuses(true);
+        try {
+          await loadAccountStatuses();
+        } finally {
+          setLoadingStatuses(false);
+        }
+      };
+      loadStatuses();
+    }
+  }, [selectedHouse, accounts]);
 
   const itemsPerPage = 10;
+  useEffect(() => {
+    // Prioriza verificação direta do Supabase antes de qualquer outra coisa
+    const checkAuth = async () => {
+      try {
+        setAuthLoading(true);
+        // Verificar diretamente com o Supabase primeiro
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session?.user) {
+          console.log("Usuário autenticado via Supabase:", session.user.id);
+          setUserId(session.user.id);
+    
+          
+          // Opcionalmente, atualizar o localStorage para manter consistência
+          if (session.access_token) {
+            localStorage.setItem('token', session.access_token);
+            localStorage.setItem('user', JSON.stringify({
+              id: session.user.id,
+              email: session.user.email
+            }));
+            localStorage.setItem('isAuthenticated', 'true');
+          }
+        } else {
+          // Só como backup verificar o localStorage
+          const tokenCheck = authService.verifyToken();
+          if (tokenCheck.valid && tokenCheck.user) {
+            console.log("Usuário autenticado via localStorage:", tokenCheck.user.id);
+            setUserId(tokenCheck.user.id);
+            
+          } else {
+            console.log("Nenhum usuário autenticado");
+            setUserId(null);
+       
+          }
+        }
+      } catch (error) {
+        console.error('Erro ao verificar autenticação:', error);
+        setUserId(null);
+
+      } finally {
+        setAuthLoading(false);
+        setAuthChecked(true);
+      }
+    };
+    
+    checkAuth();
+  }, []);
 
   useEffect(() => {
     if (selectedHouse && accounts.length > 0) {
       loadAccountStatuses();
     }
   }, [selectedHouse, accounts]);
+
+
+
+// Monitorar mudanças na autenticação
+const { data: authListener } = supabase.auth.onAuthStateChange(
+  async (event, session) => {
+    console.log("Auth state changed:", event, session);
+    
+    if (session?.user) {
+      console.log("Usuário atualizado via evento Supabase:", session.user.id);
+      setUserId(session.user.id);
+      // Remova esta linha: await fetchBanks(session.user.id);
+    } else {
+      console.log("Usuário desconectado via evento Supabase");
+      setUserId(null);
+      // Remova esta linha: setBanks([]);
+    }
+  }
+);
 
   const loadAccountStatuses = async () => {
     if (!selectedHouse) return;
@@ -148,8 +234,8 @@ function CPFAccounts() {
   };
 
   const handleStatusChange = async (accountId: string, field: keyof typeof accountStatuses[string], value: string) => {
-    if (!selectedHouse) return;
-
+    if (!selectedHouse || !accountId) return;
+  
     try {
       const currentStatus = accountStatuses[accountId] || {
         status: null,
@@ -160,18 +246,18 @@ function CPFAccounts() {
         creditos: null,
         obs: null
       };
-
+  
       // Format currency values
       let formattedValue = value;
       if (['saldo', 'deposito', 'sacado', 'creditos'].includes(field)) {
         formattedValue = formatCurrency(value);
       }
-
+  
       const updates = {
         ...currentStatus,
         [field]: formattedValue
       };
-
+  
       await updateAccountBettingHouse(accountId, selectedHouse, updates);
       
       setAccountStatuses(prev => ({
@@ -192,8 +278,11 @@ function CPFAccounts() {
 
   const getWhatsAppLink = (phone: string | null, account: Account): string => {
     if (!phone) return '#';
+    
+    // Formata o número removendo caracteres não numéricos e adicionando 55 se necessário
     const formattedPhone = formatPhoneNumber(phone);
     
+    // Se um template está selecionado, gera o link com a mensagem do template
     if (selectedTemplate) {
       const template = whatsappTemplates.find(t => t.name === selectedTemplate);
       if (template) {
@@ -202,6 +291,7 @@ function CPFAccounts() {
       }
     }
     
+    // Link padrão se não há template selecionado
     return `https://wa.me/${formattedPhone}`;
   };
 
@@ -225,25 +315,68 @@ function CPFAccounts() {
     }
   };
 
-  const handleAddNew = async () => {
-    if (isAddingNew && Object.keys(newAccount).length > 0) {
-      try {
-        const maxItem = Math.max(...accounts.map(a => a.item), 0);
-        const accountData = {
-          ...newAccount,
-          item: maxItem + 1
-        } as Omit<Account, 'id' | 'created_at' | 'updated_at'>;
+  // Add this to your component state
+const [newHouseData, setNewHouseData] = useState({
+  status: '',
+  verification: '',
+  saldo: '',
+  deposito: '',
+  sacado: '',
+  creditos: '',
+  obs: ''
+});
+
+// Then update the handleAddNew function
+const handleAddNew = async () => {
+  if (isAddingNew && Object.keys(newAccount).length > 0) {
+    try {
+      const maxItem = Math.max(...accounts.map(a => a.item), 0);
+      const accountData = {
+        ...newAccount,
+        item: maxItem + 1,
+        user_id: userId
+      } as Omit<Account, 'id' | 'created_at' | 'updated_at'>;
+      
+      // Add account first to get an ID
+      const addedAccount = await addAccount(accountData);
+
+      // Only update betting house data if a house is selected and we have an account ID
+      if (selectedHouse && addedAccount.id) {
+        await updateAccountBettingHouse(addedAccount.id, selectedHouse, newHouseData);
         
-        await addAccount(accountData);
-        setNewAccount({});
-      } catch (error) {
-        console.error('Error adding account:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Erro ao adicionar conta';
-        throw new Error(errorMessage);
+        // Update the account statuses in the UI
+        setAccountStatuses(prev => ({
+          ...prev,
+          [addedAccount.id]: {
+            status: newHouseData.status || null,
+            verification: newHouseData.verification || null,
+            saldo: newHouseData.saldo || null,
+            deposito: newHouseData.deposito || null,
+            sacado: newHouseData.sacado || null,
+            creditos: newHouseData.creditos || null,
+            obs: newHouseData.obs || null
+          }
+        }));
       }
+      
+      setNewAccount({});
+      setNewHouseData({
+        status: '',
+        verification: '',
+        saldo: '',
+        deposito: '',
+        sacado: '',
+        creditos: '',
+        obs: ''
+      });
+    } catch (error) {
+      console.error('Error adding account:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Erro ao adicionar conta';
+      throw new Error(errorMessage);
     }
-    setIsAddingNew(!isAddingNew);
-  };
+  }
+  setIsAddingNew(!isAddingNew);
+};
 
   const downloadTemplate = () => {
     const template = [
@@ -409,15 +542,42 @@ function CPFAccounts() {
       account.status.toLowerCase().includes(searchLower) ||
       (account.verification?.toLowerCase() || '').includes(searchLower) ||
       account.responsavel.toLowerCase().includes(searchLower);
-
+  
     const matchesResponsible = selectedResponsible === '' || 
       account.responsavel.toLowerCase() === selectedResponsible.toLowerCase();
-    const matchesStatus = selectedStatus === '' || account.status === selectedStatus;
-    const matchesVerification = selectedVerification === '' || account.verification === selectedVerification;
-
-    return matchesSearch && matchesResponsible && matchesStatus && matchesVerification;
+    
+    // Verificar se o status e verificação correspondem, considerando tanto a conta geral quanto a casa específica
+    let matchesStatus = selectedStatus === '';
+    let matchesVerification = selectedVerification === '';
+    
+    if (selectedHouse && accountStatuses[account.id]) {
+      // Se uma casa estiver selecionada, verificar o status e verificação da casa
+      if (selectedStatus !== '') {
+        matchesStatus = accountStatuses[account.id]?.status === selectedStatus;
+      }
+      
+      if (selectedVerification !== '') {
+        matchesVerification = accountStatuses[account.id]?.verification === selectedVerification;
+      }
+    } else {
+      // Se nenhuma casa estiver selecionada, verificar o status e verificação geral da conta
+      if (selectedStatus !== '') {
+        matchesStatus = account.status === selectedStatus;
+      }
+      
+      if (selectedVerification !== '') {
+        matchesVerification = account.verification === selectedVerification;
+      }
+    }
+    
+    // Modificar esta linha para filtragem de casas
+    const matchesHouse = !selectedHouse || (
+      accountStatuses[account.id] !== undefined && 
+      Object.values(accountStatuses[account.id]).some(value => value !== null)
+    );
+  
+    return matchesSearch && matchesResponsible && matchesStatus && matchesVerification && matchesHouse;
   });
-
   const totalPages = Math.ceil(filteredAccounts.length / itemsPerPage);
   const paginatedAccounts = filteredAccounts.slice(
     (currentPage - 1) * itemsPerPage,
@@ -432,6 +592,8 @@ function CPFAccounts() {
   };
 
   if (loading || loadingHouses) {
+    console.log('Loading states:', { loading, loadingHouses });
+    console.log('Data states:', { accounts, bettingHouses });
     return (
       <div className="flex-1 p-8 flex items-center justify-center">
         <div className="text-xl text-gray-600">Carregando...</div>
@@ -479,6 +641,28 @@ function CPFAccounts() {
     );
   };
 
+  const whatsappTemplates = [
+    { 
+      name: 'Boas-vindas', 
+      template: (name) => `Olá ${name}, seja bem-vindo(a)! Estamos felizes em ter você conosco.`
+    },
+    { 
+      name: 'Verificação', 
+      template: (name) => `Olá ${name}, precisamos verificar sua conta. Poderia enviar um documento com foto?`
+    },
+    { 
+      name: 'Confirmação de Depósito', 
+      template: (name) => `Olá ${name}, seu depósito foi confirmado com sucesso!`
+    },
+    { 
+      name: 'Solicitação de Dados', 
+      template: (name) => `Olá ${name}, precisamos de alguns dados adicionais para finalizar seu cadastro.`
+    },
+    { 
+      name: 'Suporte', 
+      template: (name) => `Olá ${name}, como podemos ajudar você hoje?`
+    }
+  ];
   const VerificationSelect = ({ value, onChange, className = '' }: { value: string, onChange: (value: string) => void, className?: string }) => {
     const selectedOption = verificationOptions.find(opt => opt.value === value);
     const baseClasses = `w-full p-1 rounded ${className}`;
@@ -512,26 +696,90 @@ function CPFAccounts() {
   };
 
   const CurrencyInput = ({ value, onChange, placeholder = 'R$ 0,00' }: { value: string | null, onChange: (value: string) => void, placeholder?: string }) => {
+    // Inicializa com o valor formatado se disponível, ou string vazia
     const [inputValue, setInputValue] = useState(value || '');
-
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const newValue = e.target.value.replace(/[^\d]/g, '');
-      const formatted = formatCurrency(newValue ? parseInt(newValue) / 100 : 0);
-      setInputValue(formatted);
-      onChange(formatted);
+    
+    // Mantém o controle da posição do cursor
+    const inputRef = useRef<HTMLInputElement>(null);
+    const cursorPosition = useRef<number | null>(null);
+    
+    // Atualiza o estado interno quando o valor do pai muda
+    useEffect(() => {
+      if (value !== undefined && value !== null) {
+        setInputValue(value);
+      }
+    }, [value]);
+  
+    // Formata como moeda durante a digitação
+    const formatCurrencyForTyping = (value: string): string => {
+      // Remove tudo exceto dígitos
+      const digits = value.replace(/\D/g, '');
+      
+      if (!digits) {
+        return 'R$ 0,00';
+      }
+      
+      // Converte para centavos
+      const valueInCents = parseInt(digits);
+      
+      // Formata com prefixo R$ e vírgula decimal
+      const reais = Math.floor(valueInCents / 100);
+      const cents = valueInCents % 100;
+      
+      return `R$ ${reais.toLocaleString('pt-BR')},${cents.toString().padStart(2, '0')}`;
     };
-
+  
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      // Salva a posição atual do cursor
+      if (inputRef.current) {
+        cursorPosition.current = inputRef.current.selectionStart;
+      }
+      
+      const rawValue = e.target.value;
+      
+      // Formata o valor durante a digitação
+      const formatted = formatCurrencyForTyping(rawValue);
+      setInputValue(formatted);
+    };
+    
+    // Depois que o valor muda, tenta manter a posição do cursor
+    useEffect(() => {
+      if (inputRef.current && cursorPosition.current !== null) {
+        requestAnimationFrame(() => {
+          if (inputRef.current) {
+            const newPosition = Math.min(cursorPosition.current, inputRef.current.value.length);
+            inputRef.current.selectionStart = newPosition;
+            inputRef.current.selectionEnd = newPosition;
+          }
+        });
+      }
+    }, [inputValue]);
+    
+    const handleBlur = () => {
+      // Atualiza o pai apenas quando o foco é perdido
+      // Certifica-se de passar um valor formatado corretamente
+      onChange(inputValue);
+    };
+    
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        inputRef.current?.blur(); // Isso vai acionar o handleBlur
+      }
+    };
+  
     return (
       <input
+        ref={inputRef}
         type="text"
         className="w-full p-1 border rounded"
         value={inputValue}
         onChange={handleChange}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
         placeholder={placeholder}
       />
     );
   };
-
   return (
     <div className="flex-1 p-8">
       <div className="bg-white rounded-lg shadow">
@@ -540,23 +788,23 @@ function CPFAccounts() {
             <h2 className="text-xl font-semibold text-gray-800">Contas CPF</h2>
             <div className="flex items-center gap-2">
               <div className="relative">
-                <select
-                  className="pl-10 p-2 border border-gray-300 rounded-md bg-white min-w-[200px]"
-                  value={selectedHouse}
-                  onChange={(e) => {
-                    setSelectedHouse(e.target.value);
-                    if (e.target.value) {
-                      loadAccountStatuses();
-                    }
-                  }}
-                >
-                  <option value="">Selecione uma casa</option>
-                  {bettingHouses.map(house => (
-                    <option key={house.id} value={house.id}>
-                      {house.name}
-                    </option>
-                  ))}
-                </select>
+              <select
+                className="pl-10 p-2 border border-gray-300 rounded-md bg-white min-w-[200px]"
+                value={selectedHouse}
+                onChange={(e) => {
+                  setSelectedHouse(e.target.value);
+                  if (e.target.value) {
+                    loadAccountStatuses();
+                  }
+                }}
+              >
+                <option value="">Selecione uma casa</option>
+                {bettingHouses.map(house => (
+                  <option key={house.id} value={house.id}>
+                    {house.name}
+                  </option>
+                ))}
+              </select>
                 <Building2 className="absolute left-2 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
               </div>
             </div>
@@ -720,8 +968,8 @@ function CPFAccounts() {
               </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full">
+            <div className="overflow-x-auto max-w-full">
+  <table className="w-full table-auto">
                 <thead className="bg-gray-50">
                   <tr>
                     {tableColumns.map(column => (
@@ -758,23 +1006,24 @@ function CPFAccounts() {
                         </td>
                       )}
                       {isColumnVisible('status') && (
-                        <td className="px-6 py-4">
-                          <StatusSelect
-                            value={newAccount.status || ''}
-                            onChange={(value) => setNewAccount({ ...newAccount, status: value })}
-                            className="border rounded"
-                          />
-                        </td>
-                      )}
-                      {isColumnVisible('verification') && (
-                        <td className="px-6 py-4">
-                          <VerificationSelect
-                            value={newAccount.verification || ''}
-                            onChange={(value) => setNewAccount({ ...newAccount, verification: value })}
-                            className="border rounded"
-                          />
-                        </td>
-                      )}
+  <td className="px-6 py-4">
+    <StatusSelect
+      value={newAccount.status}
+      onChange={(value) => setNewAccount({ ...newAccount, status: value })}
+      className="border rounded"
+    />
+  </td>
+)}
+
+{isColumnVisible('verification') && (
+  <td className="px-6 py-4">
+    <VerificationSelect
+      value={newHouseData.verification}
+      onChange={(value) => setNewHouseData({ ...newHouseData, verification: value })}
+      className="border rounded"
+    />
+  </td>
+)}
                       {isColumnVisible('name') && (
                         <td className="px-6 py-4">
                           <input
@@ -845,49 +1094,57 @@ function CPFAccounts() {
                           />
                         </td>
                       )}
-                      {isColumnVisible('saldo') && (
+                     {isColumnVisible('saldo') && (
                         <td className="px-6 py-4">
                           <CurrencyInput
-                            value={accountStatuses[newAccount.id || '']?.saldo || ''}
-                            onChange={(value) => handleStatusChange(newAccount.id || '', 'saldo', value)}
+                            value={newHouseData.saldo}
+                            onChange={(value) => setNewHouseData({...newHouseData, saldo: value})}
+                            placeholder="R$ 0,00"
                           />
                         </td>
                       )}
+
                       {isColumnVisible('deposito') && (
                         <td className="px-6 py-4">
                           <CurrencyInput
-                            value={accountStatuses[newAccount.id || '']?.deposito || ''}
-                            onChange={(value) => handleStatusChange(newAccount.id || '', 'deposito', value)}
+                            value={newHouseData.deposito}
+                            onChange={(value) => setNewHouseData({...newHouseData, deposito: value})}
+                            placeholder="R$ 0,00"
                           />
                         </td>
                       )}
-                      {isColumnVisible('sacado') && (
-                        <td className="px-6 py-4">
-                          <CurrencyInput
-                            value={accountStatuses[newAccount.id || '']?.sacado || ''}
-                            onChange={(value) => handleStatusChange(newAccount.id || '', 'sacado', value)}
-                          />
-                        </td>
-                      )}
-                      {isColumnVisible('creditos') && (
-                        <td className="px-6 py-4">
-                          <CurrencyInput
-                            value={accountStatuses[newAccount.id || '']?.creditos || ''}
-                            onChange={(value) => handleStatusChange(newAccount.id || '', 'creditos', value)}
-                          />
-                        </td>
-                      )}
-                      {isColumnVisible('obs') && (
-                        <td className="px-6 py-4">
-                          <input
-                            type="text"
-                            className="w-full p-1 border rounded"
-                            placeholder="Observações"
-                            value={accountStatuses[newAccount.id || '']?.obs || ''}
-                            onChange={(e) => handleStatusChange(newAccount.id || '', 'obs', e.target.value)}
-                          />
-                        </td>
-                      )}
+
+{isColumnVisible('sacado') && (
+  <td className="px-6 py-4">
+    <CurrencyInput
+      value={newHouseData.sacado}
+      onChange={(value) => setNewHouseData({...newHouseData, sacado: value})}
+      placeholder="R$ 0,00"
+    />
+  </td>
+)}
+
+{isColumnVisible('creditos') && (
+  <td className="px-6 py-4">
+    <CurrencyInput
+      value={newHouseData.creditos}
+      onChange={(value) => setNewHouseData({...newHouseData, creditos: value})}
+      placeholder="R$ 0,00"
+    />
+  </td>
+)}
+
+{isColumnVisible('obs') && (
+  <td className="px-6 py-4">
+    <input
+      type="text"
+      className="w-full p-1 border rounded"
+      placeholder="Observações"
+      value={newHouseData.obs}
+      onChange={(e) => setNewHouseData({...newHouseData, obs: e.target.value})}
+    />
+  </td>
+)}
                       {isColumnVisible('whatsapp') && (
                         <td className="px-6 py-4 text-center">
                           <button

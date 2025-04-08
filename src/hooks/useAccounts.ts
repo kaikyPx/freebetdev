@@ -33,6 +33,7 @@ export function useAccounts() {
   }, []);
 
   async function fetchAccounts() {
+    setLoading(true);
     try {
       // Buscar o usuário atual
       const { data: { user } } = await supabase.auth.getUser();
@@ -41,7 +42,7 @@ export function useAccounts() {
         throw new Error('User not authenticated');
       }
       
-      // Filtrar contas pelo user_id (se a tabela de contas tiver user_id)
+      // Filtrar contas pelo user_id
       const { data, error } = await supabase
         .from('accounts')
         .select('*')
@@ -58,16 +59,18 @@ export function useAccounts() {
             .order('name');
           
           if (allError) throw allError;
-          return allData || [];
+          setAccounts(allData || []);
         } else {
           throw error;
         }
+      } else {
+        setAccounts(data || []);
       }
-      
-      return data || [];
     } catch (err) {
       console.error('Error fetching accounts:', err);
-      throw err;
+      setError(err instanceof Error ? err.message : 'Erro ao buscar contas');
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -76,7 +79,7 @@ export function useAccounts() {
       console.log('Adding account:', account);
 
       // Validate required fields
-      if (!account.name || !account.cpf || !account.birth_date || !account.responsavel || !account.status) {
+      if (!account.name || !account.cpf || !account.birth_date || !account.responsavel) {
         throw new Error('Todos os campos obrigatórios devem ser preenchidos');
       }
 

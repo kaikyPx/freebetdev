@@ -148,14 +148,13 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
 
   const updateDashboardData = () => {
     // Filtra operações pelo banco selecionado se necessário
-    const filteredOperations = selectedBank 
-      ? operations.filter(op => op.bank_id === selectedBank) 
-      : operations;
+    const filteredOperations = applyFilters(operations);
+  
     
     // Organiza as operações por data
     const sortedOperations = [...filteredOperations].sort((a, b) => 
-      new Date(a.date).getTime() - new Date(b.date).getTime()
-    );
+    new Date(a.date).getTime() - new Date(b.date).getTime()
+  );
     
     // Agrega os dados para o gráfico (últimos 7 dias ou menos)
     const last7DaysData: any[] = [];
@@ -309,22 +308,29 @@ const Dashboard: React.FC<DashboardProps> = ({ user }) => {
   };
 
   const handleFilterSubmit = () => {
-    // Aqui você aplicaria os filtros e atualizaria os dados
+    // Aplica os filtros e atualiza os dados
     console.log('Applying filters:', filters);
     setShowFilters(false);
-    // Implemente a lógica de filtro aqui
+    
+    // Atualiza os dados da dashboard e organiza as apostas por mês
+    updateDashboardData();
+    // organizeBetsByMonth será chamado na renderização
   };
 
   // Organiza os dados por mês e dia para exibição
 
-const organizeBetsByMonth = () => {
-  const months: Record<string, any> = {};
-  
-  // Log para debugging
-  console.log("Organizando operações:", operations.length, "operações");
-  
-  // Percorre todas as operações e organiza por mês e dia
-  operations.forEach(op => {
+
+  const organizeBetsByMonth = () => {
+    const months: Record<string, any> = {};
+    
+    // Log para debugging
+    console.log("Organizando operações:", operations.length, "operações");
+    
+    // Aplica os filtros às operações
+    const filteredOperations = applyFilters(operations);
+    
+    // Percorre todas as operações filtradas e organiza por mês e dia
+    filteredOperations.forEach(op => {
     // Se um banco estiver selecionado e não for o mesmo, pula
     if (selectedBank && op.bank_id !== selectedBank) return;
     
@@ -397,6 +403,40 @@ const organizeBetsByMonth = () => {
   
   console.log("Meses organizados:", monthsArray);
   return monthsArray;
+};
+
+const applyFilters = (operations) => {
+  return operations.filter(op => {
+    // Filtra por banco se um banco estiver selecionado
+    if (selectedBank && op.bank_id !== selectedBank) return false;
+    
+    // Filtra por data de início e fim
+    const opDate = new Date(op.date);
+    const startDate = new Date(filters.startDate);
+    const endDate = new Date(filters.endDate);
+    startDate.setHours(0, 0, 0, 0);
+    endDate.setHours(23, 59, 59, 999);
+    
+    if (opDate < startDate || opDate > endDate) return false;
+    
+    // Filtra por título
+    if (filters.title && 
+        op.game_name && 
+        !op.game_name.toLowerCase().includes(filters.title.toLowerCase())) return false;
+    
+    // Filtra por status
+    if (filters.status !== 'all' && op.status !== filters.status) return false;
+    
+    // Filtra por esporte
+    if (filters.sport !== 'all' && op.sport !== filters.sport) return false;
+    
+    // Filtra por casa de apostas
+    if (filters.bettingHouse !== 'all' && 
+        op.house1_id !== filters.bettingHouse && 
+        op.house2_id !== filters.bettingHouse) return false;
+    
+    return true;
+  });
 };
 
   const betsByMonth = organizeBetsByMonth();

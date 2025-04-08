@@ -12,6 +12,7 @@ export interface Account {
   password1: string | null;
   chip: string | null;
   verification: string | null;
+  user_id: string; // Certifique-se de que isso esteja definido
   created_at: string;
   updated_at: string;
 }

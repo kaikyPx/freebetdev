@@ -13,18 +13,18 @@ export function useBettingHouses() {
 
   async function fetchBettingHouses() {
     try {
-      // Não filtramos por user_id pois as casas de apostas são globais
       const { data, error } = await supabase
         .from('betting_houses')
         .select('*')
         .order('name');
   
       if (error) throw error;
+      setBettingHouses(data || []); // Atualiza o estado com os dados
       return data || [];
     } catch (err) {
       console.error('Error fetching betting houses:', err);
+      setError(err.message);
       throw err;
-  
     } finally {
       setLoading(false);
     }
