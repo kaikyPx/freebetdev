@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import bcrypt from 'bcryptjs';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -81,8 +82,8 @@ export const authService = {
       if (!email || !password) {
         return { success: false, message: 'Email e senha são obrigatórios' };
       }
-      
-      // Let Supabase handle the entire registration process
+  
+      // Cria o usuário no sistema de autenticação do Supabase
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -90,40 +91,57 @@ export const authService = {
           emailRedirectTo: window.location.origin
         }
       });
-
+  
       if (error) {
         console.error('Erro ao registrar usuário:', error);
-        return { 
-          success: false, 
+        return {
+          success: false,
           message: error.message || 'Erro ao criar usuário'
         };
       }
-
+  
       if (!data || !data.user) {
         return { success: false, message: 'Erro ao criar usuário: nenhum dado retornado' };
       }
-
-      // If email verification is required, inform the user
+  
+      // Se o Supabase exigir verificação de e-mail, avisa o usuário
       if (data.session === null) {
-        return { 
-          success: false, 
-          message: 'Verifique seu email para completar o registro', 
-          requiresEmailVerification: true 
+        return {
+          success: false,
+          message: 'Verifique seu e-mail para completar o registro',
+          requiresEmailVerification: true
         };
       }
-
+  
       const userInfo = {
         id: data.user.id,
         email: data.user.email || email,
       };
-      
+  
       const token = data.session?.access_token || '';
-      
-      // Store token and user data
+  
+      // Armazena os dados localmente
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(userInfo));
       localStorage.setItem('isAuthenticated', 'true');
-      
+  
+      // Criptografa a senha manualmente antes de inserir na tabela users
+      const encryptedPassword = await bcrypt.hash(password, 10); // 10 é o número de rounds
+  
+      // Insere o usuário na tabela personalizada "users", incluindo a senha criptografada
+      const { error: insertError } = await supabase.from('users').insert([
+        {
+          id: data.user.id,
+          email: userInfo.email,
+          encrypted_password: encryptedPassword, // senha criptografada
+          created_at: new Date().toISOString()
+        }
+      ]);
+  
+      if (insertError) {
+        console.error('Erro ao inserir na tabela users:', insertError);
+      }
+  
       return {
         success: true,
         user: userInfo,
@@ -131,8 +149,8 @@ export const authService = {
       };
     } catch (error) {
       console.error('Erro durante registro:', error);
-      return { 
-        success: false, 
+      return {
+        success: false,
         message: 'Erro no servidor: ' + (error instanceof Error ? error.message : String(error))
       };
     }

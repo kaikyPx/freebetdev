@@ -472,66 +472,107 @@ const ControleGeral = () => {
   }
 
   const CurrencyInput = ({ value, onChange }: { value: number, onChange: (value: string) => void }) => {
-    const [rawValue, setRawValue] = useState(String(value * 100));
-    const [isFocused, setIsFocused] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
-    const cursorPositionRef = useRef<number>(0);
-
+    const [localValue, setLocalValue] = useState(formatCurrency(value));
+    const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+    
+    // Set initial value
     useEffect(() => {
-      if (!isFocused) {
-        setRawValue(String(value * 100));
+      if (inputRef.current && !inputRef.current.value) {
+        inputRef.current.value = formatCurrency(value);
       }
-    }, [value, isFocused]);
-
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const input = e.target;
-      const newValue = input.value.replace(/\D/g, '');
+    }, []);
+  
+    // Only update from props if the input is not focused
+    useEffect(() => {
+      if (inputRef.current && document.activeElement !== inputRef.current) {
+        inputRef.current.value = formatCurrency(value);
+        setLocalValue(formatCurrency(value));
+      }
+    }, [value]);
+  
+    const handleInput = (e: React.FormEvent<HTMLInputElement>) => {
+      const input = e.currentTarget;
+      const cursorPosition = input.selectionStart || 0;
       
-      cursorPositionRef.current = input.selectionStart || 0;
+      // Extract only numbers
+      let numericValue = input.value.replace(/\D/g, '');
       
-      setRawValue(newValue);
-      onChange(formatCurrency(newValue ? parseInt(newValue) / 100 : 0));
-
-      requestAnimationFrame(() => {
-        if (inputRef.current) {
-          inputRef.current.selectionStart = cursorPositionRef.current;
-          inputRef.current.selectionEnd = cursorPositionRef.current;
+      // Handle empty input
+      if (!numericValue) {
+        input.value = 'R$ 0,00';
+        setLocalValue('R$ 0,00');
+        
+        // Set cursor position after the "R$ "
+        setTimeout(() => {
+          input.setSelectionRange(3, 3);
+        }, 0);
+        
+        // Debounce the onChange event
+        if (debounceTimerRef.current) {
+          clearTimeout(debounceTimerRef.current);
         }
-      });
+        
+        debounceTimerRef.current = setTimeout(() => {
+          onChange('R$ 0,00');
+        }, 1000); // 1 second delay
+        
+        return;
+      }
+      
+      // Convert to cents, then to BRL format
+      const cents = parseInt(numericValue);
+      const reals = cents / 100;
+      const formatted = formatCurrency(reals);
+      
+      // Calculate new cursor position
+      const prevLength = input.value.length;
+      const lengthDiff = formatted.length - prevLength;
+      const newPosition = cursorPosition + lengthDiff;
+      
+      // Update the value directly
+      input.value = formatted;
+      setLocalValue(formatted);
+      
+      // Debounce the onChange event to avoid excessive database calls
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      
+      debounceTimerRef.current = setTimeout(() => {
+        onChange(formatted);
+      }, 1000); // 1 second delay
+      
+      // Restore cursor position
+      setTimeout(() => {
+        input.setSelectionRange(newPosition, newPosition);
+      }, 0);
     };
-
-    const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-      setIsFocused(true);
-      e.target.select();
+  
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+      // Allow only numbers, backspace, delete, and arrow keys
+      const allowedKeys = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'Tab'];
+      const isNumber = /^\d$/.test(e.key);
+      
+      if (!isNumber && !allowedKeys.includes(e.key) && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+      }
     };
-
-    const handleBlur = () => {
-      setIsFocused(false);
-    };
-
-    const displayValue = isFocused
-      ? (rawValue ? `R$ ${(parseInt(rawValue) / 100).toFixed(2)}` : 'R$ 0,00')
-      : formatCurrency(value);
-
+  
     return (
-      <div className={`
-        relative rounded-md border ${isFocused ? 'border-blue-500 ring-2 ring-blue-100' : 'border-gray-200'} 
-        bg-white transition-all duration-200 hover:border-gray-300
-      `}>
+      <div className="relative rounded-md border border-gray-200 hover:border-gray-300 bg-white transition-all duration-200 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100">
         <input
           ref={inputRef}
           type="text"
           className="w-full p-3 text-lg font-bold bg-transparent focus:outline-none"
-          value={displayValue}
-          onChange={handleChange}
-          onFocus={handleFocus}
-          onBlur={handleBlur}
+          value={localValue}
+          onChange={handleInput}
+          onKeyDown={handleKeyDown}
           placeholder="R$ 0,00"
         />
       </div>
     );
   };
-
   return (
     <div className="flex-1 p-8">
       <div className="mb-6">

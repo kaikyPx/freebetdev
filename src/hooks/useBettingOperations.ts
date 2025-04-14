@@ -68,6 +68,7 @@ export function useBettingOperations() {
       setLoading(false);
     }
   }
+  
 
   // Função para buscar resumos mensais - não use hooks dentro dela
   async function fetchMonthlySummaries(userId: string) {

@@ -17,6 +17,7 @@ interface BetCardProps {
   profit: number;
   status?: string;
   user_id?: string; // Add user_id field
+  promotion_id?: string; // Adicione esta linha se estiver faltando
 }
 
 interface DayCardProps {
@@ -39,9 +40,18 @@ interface OperationForm {
   casa2: string;
   cpf2: string;
   stake2: string;
+  // Original protection fields
   casaProt: string;
   cpfProt: string;
   stakeProt: string;
+  // New protection fields
+  casaProt2: string; 
+  cpfProt2: string;
+  stakeProt2: string;
+  casaProt3: string;
+  cpfProt3: string;
+  stakeProt3: string;
+  // Winner fields
   casaVencedora?: string;
   cpfVencedor?: string;
 }
@@ -463,6 +473,20 @@ export const BetCard: React.FC<BetCardProps> = ({
     
     setIsLoading(true);
     try {
+      // First, fetch the promotion_id from the main operation
+      const { data: betData, error: betError } = await supabase
+        .from('betting_operations')
+        .select('promotion_id')
+        .eq('id', id)
+        .single();
+      
+      if (betError) throw betError;
+      
+      if (betData?.promotion_id) {
+        setSelectedPromotionId(betData.promotion_id);
+      }
+      
+      // Continue loading operation details
       const { data, error } = await supabase
         .from('betting_operation_details')
         .select('*')
@@ -493,6 +517,13 @@ export const BetCard: React.FC<BetCardProps> = ({
               casaProt: operation.casaprot || '',
               cpfProt: operation.cpfprot || '',
               stakeProt: operation.stakeprot || '',
+              // Add new protection fields
+              casaProt2: operation.casaprot2 || '',
+              cpfProt2: operation.cpfprot2 || '',
+              stakeProt2: operation.stakeprot2 || '',
+              casaProt3: operation.casaprot3 || '',
+              cpfProt3: operation.cpfprot3 || '',
+              stakeProt3: operation.stakeprot3 || '',
               casaVencedora: operation.casavencedora || '',
               cpfVencedor: operation.cpfvencedor || ''
             };
@@ -519,33 +550,29 @@ export const BetCard: React.FC<BetCardProps> = ({
   }, [isExpanded]);
 
   useEffect(() => {
-    console.log('useEffect triggered with:', {
-      promotion_id,
-      loadingPromotions,
-      promotionsCount: promotions.length
-    });
-    
-    if (!promotion_id || loadingPromotions) {
-      console.log('Skipping effect: still loading or no promotion_id');
-      return;
-    }
-    
-    console.log('Available promotions:', promotions);
-    
-    if (promotions.length > 0) {
-      const foundPromotion = promotions.find(p => String(p.id) === String(promotion_id));
+    // Use selectedPromotionId em vez de promotion_id já que é esse que está definido
+    if (!loadingPromotions && selectedPromotionId && promotions.length > 0) {
+      // Encontre a promoção com o ID correspondente
+      const promotion = promotions.find(p => String(p.id) === String(selectedPromotionId));
       
-      if (foundPromotion) {
-        console.log('Promoção encontrada:', foundPromotion);
-        setSelectedPromotion(foundPromotion.name);
-        setSelectedPromotionId(promotion_id);
+      // Se encontrou, use o nome; caso contrário, use um fallback
+      if (promotion) {
+        setSelectedPromotion(promotion.name);
       } else {
-        console.log('Promoção com ID', promotion_id, 'não encontrada nas promoções carregadas');
-        setSelectedPromotion(`Promoção #${promotion_id}`);
-        setSelectedPromotionId(promotion_id);
+        setSelectedPromotion(`Promoção #${selectedPromotionId.substring(0, 6)}...`);
       }
     }
-  }, [promotion_id, promotions, loadingPromotions]);
+  }, [selectedPromotionId, promotions, loadingPromotions]);
+
+  useEffect(() => {
+    console.log("Estado atual:", {
+      promotion_id,
+      promotions,
+      loadingPromotions,
+      selectedPromotionId,
+      selectedPromotion
+    });
+  }, [promotion_id, promotions, loadingPromotions, selectedPromotionId, selectedPromotion]);
 
   useEffect(() => {
     console.log("Promoções carregadas:", promotions);
@@ -602,6 +629,13 @@ export const BetCard: React.FC<BetCardProps> = ({
         casaprot: formData.casaProt,
         cpfprot: formData.cpfProt,
         stakeprot: formData.stakeProt,
+        // Add new protection fields
+        casaprot2: formData.casaProt2,
+        cpfprot2: formData.cpfProt2,
+        stakeprot2: formData.stakeProt2,
+        casaprot3: formData.casaProt3,
+        cpfprot3: formData.cpfProt3,
+        stakeprot3: formData.stakeProt3,
         casavencedora: formData.casaVencedora,
         cpfvencedor: formData.cpfVencedor,
         updated_at: new Date().toISOString()
@@ -636,7 +670,6 @@ export const BetCard: React.FC<BetCardProps> = ({
       setIsUpdating(false);
     }
   };
-
   const toggleAccount = (accountId: string) => {
     if (!accountId) return; // Protect against undefined accounts
     
@@ -667,6 +700,13 @@ export const BetCard: React.FC<BetCardProps> = ({
             casaProt: '',
             cpfProt: '',
             stakeProt: '',
+            // Initialize new protection fields
+            casaProt2: '',
+            cpfProt2: '',
+            stakeProt2: '',
+            casaProt3: '',
+            cpfProt3: '',
+            stakeProt3: '',
             casaVencedora: '',
             cpfVencedor: ''
           }
@@ -697,6 +737,13 @@ export const BetCard: React.FC<BetCardProps> = ({
           casaProt: '',
           cpfProt: '',
           stakeProt: '',
+          // Initialize new protection fields
+          casaProt2: '',
+          cpfProt2: '',
+          stakeProt2: '',
+          casaProt3: '',
+          cpfProt3: '',
+          stakeProt3: '',
           casaVencedora: '',
           cpfVencedor: ''
         }
@@ -782,7 +829,9 @@ export const BetCard: React.FC<BetCardProps> = ({
         >
           {loadingPromotions 
             ? 'Carregando...' 
-            : (selectedPromotion || 'Selecione a Promoção')}
+            : (selectedPromotion 
+              ? selectedPromotion 
+              : `Selecione (ID: ${selectedPromotionId ? selectedPromotionId.substring(0,6)+'...' : 'nenhum'})`)}
           <ChevronDown className="w-4 h-4" />
         </button>
         {isPromotionOpen && !loadingPromotions && (
@@ -811,212 +860,435 @@ export const BetCard: React.FC<BetCardProps> = ({
       </div>
     );
   };
+
+// Função modificada para permitir duplicar usando a mesma conta
+const duplicateOperation = async (sourceAccountId) => {
+  setIsUpdating(true);
   
-  const renderOperationForm = (accountId: string, index: number) => {
-    const form = operationForms[accountId];
+  try {
+    // Get source form data to duplicate
+    const sourceForm = operationForms[sourceAccountId];
+    
+    // Find an unused account to use for the duplicate
+    const usedAccountIds = selectedAccounts;
+    const availableAccounts = accounts.filter(account => 
+      !usedAccountIds.includes(account.id)
+    );
+    
+    if (availableAccounts.length === 0) {
+      throw new Error("Não há contas disponíveis para duplicação. Todas as contas já estão em uso.");
+    }
+    
+    // Use the first available account
+    const newAccountId = availableAccounts[0].id;
+    
+    // Create a copy of the form data
+    const newFormData = {
+      ...sourceForm,
+      id: newAccountId,
+      cpf1: newAccountId // Update the CPF1 field to match the new account
+    };
+    
+    // Insert new record with the different account_id
+    const { data, error } = await supabase
+      .from('betting_operation_details')
+      .insert({
+        betting_operation_id: id,
+        account_id: newAccountId,
+        casa1: newFormData.casa1,
+        cpf1: newFormData.cpf1,
+        stake1: newFormData.stake1,
+        casa2: newFormData.casa2,
+        cpf2: newFormData.cpf2,
+        stake2: newFormData.stake2,
+        casaprot: newFormData.casaProt,
+        cpfprot: newFormData.cpfProt,
+        stakeprot: newFormData.stakeProt,
+        casaprot2: newFormData.casaProt2,
+        cpfprot2: newFormData.cpfProt2,
+        stakeprot2: newFormData.stakeProt2,
+        casaprot3: newFormData.casaProt3,
+        cpfprot3: newFormData.cpfProt3,
+        stakeprot3: newFormData.stakeProt3,
+        casavencedora: newFormData.casaVencedora,
+        cpfvencedor: newFormData.cpfVencedor,
+        updated_at: new Date().toISOString()
+      });
+    
+    if (error) throw error;
+    
+    // Update local state
+    setSelectedAccounts(prev => [...prev, newAccountId]);
+    setOperationForms(prev => ({
+      ...prev,
+      [newAccountId]: newFormData
+    }));
+    
+    // Reload operation details
+    await loadOperationDetails();
+    
+    setUpdateStatus({
+      show: true,
+      success: true,
+      message: 'Operação duplicada com sucesso!'
+    });
+    
+    setTimeout(() => {
+      setUpdateStatus(prev => ({ ...prev, show: false }));
+    }, 3000);
+    
+  } catch (error) {
+    console.error('Erro ao duplicar operação:', error);
+    setUpdateStatus({
+      show: true,
+      success: false,
+      message: 'Erro ao duplicar: ' + (error?.message || error?.toString() || 'Tente novamente')
+    });
+  } finally {
+    setIsUpdating(false);
+  }
+};
+  
+const renderOperationForm = (accountId: string, index: number) => {
+  const form = operationForms[accountId];
 
-    return (
-      <div key={accountId} className={`mb-2 ${index > 0 ? 'mt-2 pt-2 border-t border-gray-200' : ''}`}>
-        {index === 0 && (
-          <div className="grid grid-cols-11 gap-4 mb-2">
-            <div className="col-span-1">
-              <span className="text-sm font-medium text-gray-600">Casa 1 Ativação</span>
-            </div>
-            <div className="col-span-1">
-              <span className="text-sm font-medium text-gray-600">CPF 1 Ativação</span>
-            </div>
-            <div className="col-span-1">
-              <span className="text-sm font-medium text-gray-600">Stake 1</span>
-            </div>
-            <div className="col-span-1">
-              <span className="text-sm font-medium text-gray-600">Casa 2 Ativação</span>
-            </div>
-            <div className="col-span-1">
-              <span className="text-sm font-medium text-gray-600">CPF 2 Ativação</span>
-            </div>
-            <div className="col-span-1">
-              <span className="text-sm font-medium text-gray-600">Stake 2</span>
-            </div>
-            <div className="col-span-1">
-              <span className="text-sm font-medium text-gray-600">Casa 3 Proteção</span>
-            </div>
-            <div className="col-span-1">
-              <span className="text-sm font-medium text-gray-600">CPF Proteção</span>
-            </div>
-            <div className="col-span-1">
-              <span className="text-sm font-medium text-gray-600">Stake</span>
-            </div>
-            <div className="col-span-1">
-              <span className="text-sm font-medium text-gray-600">Casa Vencedora</span>
-            </div>
-            <div className="col-span-1">
-              <span className="text-sm font-medium text-gray-600">CPF Vencedor</span>
-            </div>
-          </div>
-        )}
-
-        <div className="grid grid-cols-11 gap-4">
-          <div className="col-span-1">
-            <select 
-              className="w-full p-2 border rounded-md bg-white"
-              value={form.casa1}
-              onChange={(e) => updateOperationForm(accountId, 'casa1', e.target.value)}
-              disabled={isUpdating}
-            >
-              <option value="">Selecione</option>
-              {bettingHouses.map(house => (
-                <option key={house.id} value={house.id}>{house.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="col-span-1">
-            <select 
-              className="w-full p-2 border rounded-md bg-white"
-              value={form.cpf1}
-              onChange={(e) => updateOperationForm(accountId, 'cpf1', e.target.value)}
-              disabled={isUpdating}
-            >
-              <option value="">Selecione</option>
-              {accounts.map(account => (
-                <option key={account.id} value={account.id} title={account.name}>
-                  {truncateName(account.name)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="col-span-1">
-            <input
-              type="text"
-              className="w-full p-2 border rounded-md bg-white"
-              placeholder="R$ 0,00"
-              value={form.stake1}
-              onChange={(e) => updateOperationForm(accountId, 'stake1', e.target.value)}
-              disabled={isUpdating}
-            />
-          </div>
-
-          <div className="col-span-1">
-            <select 
-              className="w-full p-2 border rounded-md bg-white"
-              value={form.casa2}
-              onChange={(e) => updateOperationForm(accountId, 'casa2', e.target.value)}
-              disabled={isUpdating}
-            >
-              <option value="">Selecione</option>
-              {bettingHouses.map(house => (
-                <option key={house.id} value={house.id}>{house.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="col-span-1">
-            <select 
-              className="w-full p-2 border rounded-md bg-white"
-              value={form.cpf2}
-              onChange={(e) => updateOperationForm(accountId, 'cpf2', e.target.value)}
-              disabled={isUpdating}
-            >
-              <option value="">Selecione</option>
-              {accounts.map(account => (
-                <option key={account.id} value={account.id} title={account.name}>
-                  {truncateName(account.name)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="col-span-1">
-            <input
-              type="text"
-              className="w-full p-2 border rounded-md bg-white"
-              placeholder="R$ 0,00"
-              value={form.stake2}
-              onChange={(e) => updateOperationForm(accountId, 'stake2', e.target.value)}
-              disabled={isUpdating}
-            />
-          </div>
-
-          <div className="col-span-1">
-            <select 
-              className="w-full p-2 border rounded-md bg-white"
-              value={form.casaProt}
-              onChange={(e) => updateOperationForm(accountId, 'casaProt', e.target.value)}
-              disabled={isUpdating}
-            >
-              <option value="">Selecione</option>
-              {bettingHouses.map(house => (
-                <option key={house.id} value={house.id}>{house.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="col-span-1">
-            <select 
-              className="w-full p-2 border rounded-md bg-white"
-              value={form.cpfProt}
-              onChange={(e) => updateOperationForm(accountId, 'cpfProt', e.target.value)}
-              disabled={isUpdating}
-            >
-              <option value="">Selecione</option>
-              {accounts.map(account => (
-                <option key={account.id} value={account.id} title={account.name}>
-                  {truncateName(account.name)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="col-span-1">
-            <input
-              type="text"
-              className="w-full p-2 border rounded-md bg-white"
-              placeholder="R$ 0,00"
-              value={form.stakeProt}
-              onChange={(e) => updateOperationForm(accountId, 'stakeProt', e.target.value)}
-              disabled={isUpdating}
-            />
-          </div>
-
-          <div className="col-span-1">
-            <select 
-              className={`w-full p-2 border rounded-md ${
-                form.casaVencedora ? 'bg-green-50' : 'bg-white'
-              }`}
-              value={form.casaVencedora || ''}
-              onChange={(e) => updateOperationForm(accountId, 'casaVencedora', e.target.value)}
-              disabled={isUpdating}
-            >
-              <option value="">Selecione</option>
-              {bettingHouses.map(house => (
-                <option key={house.id} value={house.id}>{house.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="col-span-1">
-            <select 
-              className={`w-full p-2 border rounded-md ${
-                form.cpfVencedor ? 'bg-green-50' : 'bg-white'
-              }`}
-              value={form.cpfVencedor || ''}
-              onChange={(e) => updateOperationForm(accountId, 'cpfVencedor', e.target.value)}
-              disabled={isUpdating}
-            >
-              <option value="">Selecione</option>
-              {accounts.map(account => (
-                <option key={account.id} value={account.id} title={account.name}>
-                  {truncateName(account.name)}
-                </option>
-              ))}
-            </select>
-          </div>
+  // Always show field headers for each form (not just index 0)
+  const renderFieldHeaders = () => (
+    <>
+      {/* Initial fields - Activation + First Protection */}
+      <div className="grid grid-cols-11 gap-4 mb-2">
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">Casa 1 Ativação</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">CPF 1 Ativação</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">Stake 1</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">Casa 2 Ativação</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">CPF 2 Ativação</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">Stake 2</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">Casa Proteção 1</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">CPF Proteção 1</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">Stake Prot. 1</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">Casa Vencedora</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">CPF Vencedor</span>
         </div>
       </div>
-    );
-  };
+    </>
+  );
 
+  return (
+    <div key={accountId} className={`mb-2 ${index > 0 ? 'mt-2 pt-2 border-t border-gray-200' : ''}`}>
+      {/* Add duplicate button at the top right of each form */}
+      <div className="flex justify-between items-center mb-2">
+        {/* <div className="text-sm font-medium text-gray-700">
+          Account: {truncateName(accounts.find(acc => acc.id === accountId)?.name || accountId)}
+        </div> */}
+        <button
+          onClick={() => duplicateOperation(accountId)}
+          className="px-2 py-1 bg-blue-50 text-blue-600 rounded-md text-sm flex items-center gap-1 hover:bg-blue-100 transition-colors"
+          disabled={isUpdating}
+          title="Duplicar esta operação para outra conta"
+        >
+          <Plus className="w-4 h-4" /> Duplicar
+        </button>
+      </div>
+      
+      {/* Show field headers for all forms, not just the first one */}
+      {renderFieldHeaders()}
+
+      {/* Row 1: Original fields */}
+      <div className="grid grid-cols-11 gap-4 mb-4">
+        <div className="col-span-1">
+          <select 
+            className="w-full p-2 border rounded-md bg-white"
+            value={form.casa1}
+            onChange={(e) => updateOperationForm(accountId, 'casa1', e.target.value)}
+            disabled={isUpdating}
+          >
+            <option value="">Selecione</option>
+            {bettingHouses.map(house => (
+              <option key={house.id} value={house.id}>{house.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-span-1">
+          <select 
+            className="w-full p-2 border rounded-md bg-white"
+            value={form.cpf1}
+            onChange={(e) => updateOperationForm(accountId, 'cpf1', e.target.value)}
+            disabled={isUpdating}
+          >
+            <option value="">Selecione</option>
+            {accounts.map(account => (
+              <option key={account.id} value={account.id} title={account.name}>
+                {truncateName(account.name)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-span-1">
+          <input
+            type="text"
+            className="w-full p-2 border rounded-md bg-white"
+            placeholder="R$ 0,00"
+            value={form.stake1}
+            onChange={(e) => updateOperationForm(accountId, 'stake1', e.target.value)}
+            disabled={isUpdating}
+          />
+        </div>
+
+        <div className="col-span-1">
+          <select 
+            className="w-full p-2 border rounded-md bg-white"
+            value={form.casa2}
+            onChange={(e) => updateOperationForm(accountId, 'casa2', e.target.value)}
+            disabled={isUpdating}
+          >
+            <option value="">Selecione</option>
+            {bettingHouses.map(house => (
+              <option key={house.id} value={house.id}>{house.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-span-1">
+          <select 
+            className="w-full p-2 border rounded-md bg-white"
+            value={form.cpf2}
+            onChange={(e) => updateOperationForm(accountId, 'cpf2', e.target.value)}
+            disabled={isUpdating}
+          >
+            <option value="">Selecione</option>
+            {accounts.map(account => (
+              <option key={account.id} value={account.id} title={account.name}>
+                {truncateName(account.name)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-span-1">
+          <input
+            type="text"
+            className="w-full p-2 border rounded-md bg-white"
+            placeholder="R$ 0,00"
+            value={form.stake2}
+            onChange={(e) => updateOperationForm(accountId, 'stake2', e.target.value)}
+            disabled={isUpdating}
+          />
+        </div>
+
+        <div className="col-span-1">
+          <select 
+            className="w-full p-2 border rounded-md bg-white"
+            value={form.casaProt}
+            onChange={(e) => updateOperationForm(accountId, 'casaProt', e.target.value)}
+            disabled={isUpdating}
+          >
+            <option value="">Selecione</option>
+            {bettingHouses.map(house => (
+              <option key={house.id} value={house.id}>{house.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-span-1">
+          <select 
+            className="w-full p-2 border rounded-md bg-white"
+            value={form.cpfProt}
+            onChange={(e) => updateOperationForm(accountId, 'cpfProt', e.target.value)}
+            disabled={isUpdating}
+          >
+            <option value="">Selecione</option>
+            {accounts.map(account => (
+              <option key={account.id} value={account.id} title={account.name}>
+                {truncateName(account.name)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-span-1">
+          <input
+            type="text"
+            className="w-full p-2 border rounded-md bg-white"
+            placeholder="R$ 0,00"
+            value={form.stakeProt}
+            onChange={(e) => updateOperationForm(accountId, 'stakeProt', e.target.value)}
+            disabled={isUpdating}
+          />
+        </div>
+
+        <div className="col-span-1">
+          <select 
+            className={`w-full p-2 border rounded-md ${
+              form.casaVencedora ? 'bg-green-50' : 'bg-white'
+            }`}
+            value={form.casaVencedora || ''}
+            onChange={(e) => updateOperationForm(accountId, 'casaVencedora', e.target.value)}
+            disabled={isUpdating}
+          >
+            <option value="">Selecione</option>
+            {bettingHouses.map(house => (
+              <option key={house.id} value={house.id}>{house.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-span-1">
+          <select 
+            className={`w-full p-2 border rounded-md ${
+              form.cpfVencedor ? 'bg-green-50' : 'bg-white'
+            }`}
+            value={form.cpfVencedor || ''}
+            onChange={(e) => updateOperationForm(accountId, 'cpfVencedor', e.target.value)}
+            disabled={isUpdating}
+          >
+            <option value="">Selecione</option>
+            {accounts.map(account => (
+              <option key={account.id} value={account.id} title={account.name}>
+                {truncateName(account.name)}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Protection Fields Header - Show for all forms */}
+      <div className="grid grid-cols-9 gap-4 mt-2 mb-2">
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">Casa Prot. 2</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">CPF Prot. 2</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">Stake Prot. 2</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">Casa Prot. 3</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">CPF Prot. 3</span>
+        </div>
+        <div className="col-span-1">
+          <span className="text-sm font-medium text-gray-600">Stake Prot. 3</span>
+        </div>
+        <div className="col-span-3"></div>
+      </div>
+
+      {/* Row 2: Additional Protection Fields */}
+      <div className="grid grid-cols-9 gap-4">
+        {/* Protection 2 */}
+        <div className="col-span-1">
+          <select 
+            className="w-full p-2 border rounded-md bg-white"
+            value={form.casaProt2}
+            onChange={(e) => updateOperationForm(accountId, 'casaProt2', e.target.value)}
+            disabled={isUpdating}
+          >
+            <option value="">Selecione</option>
+            {bettingHouses.map(house => (
+              <option key={house.id} value={house.id}>{house.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-span-1">
+          <select 
+            className="w-full p-2 border rounded-md bg-white"
+            value={form.cpfProt2}
+            onChange={(e) => updateOperationForm(accountId, 'cpfProt2', e.target.value)}
+            disabled={isUpdating}
+          >
+            <option value="">Selecione</option>
+            {accounts.map(account => (
+              <option key={account.id} value={account.id} title={account.name}>
+                {truncateName(account.name)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-span-1">
+          <input
+            type="text"
+            className="w-full p-2 border rounded-md bg-white"
+            placeholder="R$ 0,00"
+            value={form.stakeProt2}
+            onChange={(e) => updateOperationForm(accountId, 'stakeProt2', e.target.value)}
+            disabled={isUpdating}
+          />
+        </div>
+
+        {/* Protection 3 */}
+        <div className="col-span-1">
+          <select 
+            className="w-full p-2 border rounded-md bg-white"
+            value={form.casaProt3}
+            onChange={(e) => updateOperationForm(accountId, 'casaProt3', e.target.value)}
+            disabled={isUpdating}
+          >
+            <option value="">Selecione</option>
+            {bettingHouses.map(house => (
+              <option key={house.id} value={house.id}>{house.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-span-1">
+          <select 
+            className="w-full p-2 border rounded-md bg-white"
+            value={form.cpfProt3}
+            onChange={(e) => updateOperationForm(accountId, 'cpfProt3', e.target.value)}
+            disabled={isUpdating}
+          >
+            <option value="">Selecione</option>
+            {accounts.map(account => (
+              <option key={account.id} value={account.id} title={account.name}>
+                {truncateName(account.name)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="col-span-1">
+          <input
+            type="text"
+            className="w-full p-2 border rounded-md bg-white"
+            placeholder="R$ 0,00"
+            value={form.stakeProt3}
+            onChange={(e) => updateOperationForm(accountId, 'stakeProt3', e.target.value)}
+            disabled={isUpdating}
+          />
+        </div>
+
+        {/* Empty space for alignment */}
+        <div className="col-span-3"></div>
+      </div>
+    </div>
+  );
+};
   return (
     <div className="bg-white p-4 rounded-lg shadow-sm mb-2 relative">
       {isUpdating && (

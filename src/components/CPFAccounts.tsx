@@ -340,11 +340,14 @@ const handleAddNew = async () => {
       // Add account first to get an ID
       const addedAccount = await addAccount(accountData);
 
-      // Only update betting house data if a house is selected and we have an account ID
+      // Criar o CPF em todas as casas de apostas
+      for (const house of bettingHouses) {
+        // Use os mesmos dados para todas as casas
+        await updateAccountBettingHouse(addedAccount.id, house.id, newHouseData);
+      }
+      
+      // Atualizar o accountStatuses apenas para a casa selecionada
       if (selectedHouse && addedAccount.id) {
-        await updateAccountBettingHouse(addedAccount.id, selectedHouse, newHouseData);
-        
-        // Update the account statuses in the UI
         setAccountStatuses(prev => ({
           ...prev,
           [addedAccount.id]: {
